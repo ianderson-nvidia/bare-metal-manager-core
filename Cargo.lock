@@ -1798,6 +1798,7 @@ dependencies = [
  "async-trait",
  "carbide-health-report",
  "carbide-rpc",
+ "carbide-secrets",
  "carbide-tls",
  "carbide-uuid",
  "carbide-version",

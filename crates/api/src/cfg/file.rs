@@ -1468,6 +1468,7 @@ impl Default for DpaConfig {
             subnet_ip: Self::default_subnet_ip(),
             subnet_mask: 0,
             hb_interval: Self::default_hb_interval(),
+            auth: MqttAuthConfig::default(),
         }
     }
 }
@@ -2449,6 +2450,51 @@ fn default_mqtt_broker_port() -> u16 {
     1884
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum MqttAuthMode {
+    #[default]
+    None,
+    BasicAuth,
+    Oauth2,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct MqttOAuth2Config {
+    pub token_url: String,
+
+    #[serde(default)]
+    pub scopes: Vec<String>,
+
+    #[serde(
+        default = "MqttOAuth2Config::default_http_timeout",
+        deserialize_with = "deserialize_duration",
+        serialize_with = "as_std_duration"
+    )]
+    pub http_timeout: std::time::Duration,
+
+    #[serde(default = "MqttOAuth2Config::default_username")]
+    pub username: String,
+}
+
+impl MqttOAuth2Config {
+    fn default_http_timeout() -> std::time::Duration {
+        std::time::Duration::from_secs(30)
+    }
+
+    fn default_username() -> String {
+        "oauth2token".to_string()
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct MqttAuthConfig {
+    #[serde(default)]
+    pub auth_mode: MqttAuthMode,
+
+    pub oauth2: Option<MqttOAuth2Config>,
+}
+
 /// DPA (aka Cluster Interconnect Network) related configuration
 /// Enabled DPA, and specifies basic network settings.
 /// The VNI to be used by DPA will be the same as the parent VPC.
@@ -2481,6 +2527,9 @@ pub struct DpaConfig {
         serialize_with = "as_duration"
     )]
     pub hb_interval: chrono::TimeDelta,
+
+    #[serde(default)]
+    pub auth: MqttAuthConfig,
 }
 
 /// DSX Exchange Event Bus configuration for publishing state change events via MQTT 3.1.1.
@@ -2513,6 +2562,9 @@ pub struct DsxExchangeEventBusConfig {
     /// Events are dropped if the queue is full. Defaults to 1024.
     #[serde(default = "DsxExchangeEventBusConfig::default_queue_capacity")]
     pub queue_capacity: usize,
+
+    #[serde(default)]
+    pub auth: MqttAuthConfig,
 }
 
 impl DsxExchangeEventBusConfig {
@@ -3768,6 +3820,7 @@ mqtt_endpoint = "mqtt.forge"
                 hb_interval: Duration::minutes(2),
                 subnet_ip: Ipv4Addr::UNSPECIFIED,
                 subnet_mask: 0_i32,
+                auth: MqttAuthConfig::default(),
             }
         );
     }
