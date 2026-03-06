@@ -31,6 +31,7 @@ use sqlx::postgres::PgRow;
 use sqlx::types::Json;
 use sqlx::{FromRow, Row};
 
+use crate::dns::label::{DnsLabel, normalize_to_dns_label};
 use crate::metadata::Metadata;
 
 #[derive(Clone, Debug, Default)]
@@ -71,6 +72,14 @@ pub struct Tenant {
     pub routing_profile_type: Option<RoutingProfileType>,
     pub metadata: Metadata,
     pub version: ConfigVersion,
+}
+impl DnsLabel for Tenant {
+    /// Returns a DNS-safe label derived from the tenant's organization_name
+    /// name (`organization_name` in the DB).  For example, `"NVIDIA Corp"` →
+    /// `"nvidia-corp"` and `"O'Brien Labs"` → `"obrien-labs"`.
+    fn dns_label(&self) -> String {
+        normalize_to_dns_label(&self.metadata.name)
+    }
 }
 
 impl TryFrom<Tenant> for rpc::forge::Tenant {

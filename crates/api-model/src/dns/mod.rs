@@ -21,11 +21,13 @@ use dns_record::SoaRecord;
 use serde::{Deserialize, Serialize};
 
 pub mod domain_info;
+pub mod label;
 pub mod metadata;
 pub mod resource_record;
 pub mod snapshot;
 
 pub use domain_info::DomainInfo;
+pub use label::{DnsLabel, normalize_to_dns_label};
 pub use metadata::DomainMetadata;
 pub use resource_record::ResourceRecord;
 pub use snapshot::SoaSnapshot;
@@ -39,6 +41,7 @@ pub struct Domain {
     pub deleted: Option<DateTime<Utc>>,
     pub soa: Option<SoaSnapshot>,
     pub metadata: Option<DomainMetadata>,
+    pub tenant_organization_id: Option<String>,
 }
 
 impl Domain {
@@ -60,10 +63,11 @@ impl Domain {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NewDomain {
     pub name: String,
     pub soa: Option<SoaSnapshot>,
+    pub tenant_organization_id: Option<String>,
 }
 
 impl NewDomain {
@@ -73,6 +77,7 @@ impl NewDomain {
         Self {
             soa: Some(SoaSnapshot::new(&name)),
             name,
+            ..Default::default()
         }
     }
 }
@@ -90,9 +95,12 @@ impl TryFrom<rpc::protos::dns::Domain> for NewDomain {
             })
             .transpose()?;
 
+        let tenant_organization_id = proto.tenant_organization_id.map(|id| id.to_string());
+
         Ok(NewDomain {
             name: proto.name,
             soa,
+            tenant_organization_id,
         })
     }
 }
@@ -107,6 +115,7 @@ impl From<Domain> for rpc::protos::dns::Domain {
             deleted: domain.deleted.map(|d| d.into()),
             metadata: domain.metadata.map(|m| m.into()),
             soa: domain.soa.map(|s| s.0.to_string()),
+            tenant_organization_id: domain.tenant_organization_id.map(|id| id.to_string()),
         }
     }
 }
@@ -166,6 +175,7 @@ impl TryFrom<rpc::protos::dns::Domain> for Domain {
             deleted,
             soa,
             metadata,
+            tenant_organization_id: domain.tenant_organization_id,
         })
     }
 }

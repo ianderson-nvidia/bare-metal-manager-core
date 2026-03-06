@@ -171,6 +171,7 @@ pub async fn create_legacy_compat(
     // Convert legacy Domain to CreateDomainRequest
     let create_request = CreateDomainRequest {
         name: domain_legacy.name,
+        tenant_organization_id: None, // Legacy Domains have no tenant relationship
     };
 
     // Call the new handler
@@ -206,9 +207,11 @@ pub async fn update_legacy_compat(
             created: domain_legacy.created,
             updated: domain_legacy.updated,
             deleted: domain_legacy.deleted,
-            metadata: None, // Legacy doesn't have metadata
-            soa: None,      // Legacy doesn't have SOA
+            metadata: None,               // Legacy doesn't have metadata
+            soa: None,                    // Legacy doesn't have SOA
+            tenant_organization_id: None, // Legacy doesn't have a tenant association
         }),
+        tenant_organization_id: None, // Legacy does not have a tenant association
     };
 
     // Call the new handler
@@ -261,6 +264,7 @@ pub async fn find_legacy_compat(
     let query = DomainSearchQuery {
         id: query_legacy.id,
         name: query_legacy.name,
+        tenant_organization_id: None,
     };
 
     // Call the new handler

@@ -313,11 +313,16 @@ impl ApiClient {
         Ok(self.0.find_network_segments_by_ids(request).await?)
     }
 
+    // TODO Allow getting all domains from a specific tenant - IA
     pub async fn get_domains(
         &self,
         id: Option<::carbide_uuid::domain::DomainId>,
     ) -> CarbideCliResult<::rpc::protos::dns::DomainList> {
-        let request = ::rpc::protos::dns::DomainSearchQuery { id, name: None };
+        let request = ::rpc::protos::dns::DomainSearchQuery {
+            id,
+            name: None,
+            tenant_organization_id: None,
+        };
         Ok(self.0.find_domain(request).await?)
     }
 

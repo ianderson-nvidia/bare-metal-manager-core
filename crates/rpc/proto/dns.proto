@@ -75,19 +75,23 @@ message Domain {
   google.protobuf.Timestamp deleted = 5;
   Metadata metadata = 6;
   optional string soa = 7;
+  optional string tenant_organization_id = 8;
 }
 
 message CreateDomainRequest {
   string name = 1;
+  optional string tenant_organization_id = 2;
 }
 
 message UpdateDomainRequest {
   Domain domain = 1;
+  optional string tenant_organization_id = 2;
 }
 
 message DomainSearchQuery {
   optional common.DomainId id = 1;
   optional string name = 2; 
+  optional string tenant_organization_id = 3;
 }
 
 message DomainDeletionRequest {

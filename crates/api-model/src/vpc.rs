@@ -31,7 +31,12 @@ use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgRow;
 use sqlx::{FromRow, Row};
 
+<<<<<<< HEAD
 use crate::metadata::{LabelFilter, Metadata};
+=======
+use crate::dns::{DnsLabel, normalize_to_dns_label};
+use crate::metadata::Metadata;
+>>>>>>> 90d5ae5b (feat(dns): add records table and tenant-owned zone schema)
 use crate::tenant::RoutingProfileType;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -184,6 +189,15 @@ impl From<Vpc> for rpc::forge::Vpc {
             },
             default_nvlink_logical_partition_id: None,
         }
+    }
+}
+
+impl DnsLabel for Vpc {
+    /// Returns a DNS-safe label derived from the VPC's display name
+    /// (`vpcs.name` in the DB).  For example, `"Production VPC"` →
+    /// `"production-vpc"`.
+    fn dns_label(&self) -> String {
+        normalize_to_dns_label(&self.metadata.name)
     }
 }
 

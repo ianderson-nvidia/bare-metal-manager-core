@@ -180,6 +180,7 @@ async fn get_domain_name(state: Arc<Api>, domain_id: &DomainId) -> eyre::Result<
     let request = tonic::Request::new(rpc::protos::dns::DomainSearchQuery {
         id: Some(*domain_id),
         name: None,
+        tenant_organization_id: None,
     });
     let domain_list = state
         .find_domain(request)

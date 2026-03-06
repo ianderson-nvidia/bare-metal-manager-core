@@ -89,6 +89,7 @@ async fn fetch_domains(api: Arc<Api>) -> Result<::rpc::protos::dns::DomainList, 
     let request = tonic::Request::new(rpc::protos::dns::DomainSearchQuery {
         id: None,
         name: None,
+        tenant_organization_id: None,
     });
     api.find_domain(request)
         .await

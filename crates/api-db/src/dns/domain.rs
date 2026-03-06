@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+use std::fmt::Debug;
 use std::str::FromStr;
 
 use carbide_uuid::domain::DomainId;
@@ -50,6 +50,7 @@ pub struct DbDomain {
     pub deleted: Option<DateTime<Utc>>,
     pub soa: sqlx::types::Json<Option<dns_record::SoaRecord>>,
     pub domain_metadata_id: Option<i32>,
+    pub tenant_organization_id: Option<String>,
 }
 
 impl From<DbDomain> for Domain {
@@ -62,6 +63,7 @@ impl From<DbDomain> for Domain {
             deleted: db.deleted,
             soa: db.soa.0.map(SoaSnapshot),
             metadata: None,
+            tenant_organization_id: db.tenant_organization_id,
         }
     }
 }
@@ -94,8 +96,7 @@ pub async fn persist(value: NewDomain, txn: &mut PgConnection) -> DatabaseResult
     // Create default metadata entry
     let metadata_id = super::domain_metadata::DbMetadata::create_default(txn).await?;
 
-    let query =
-        "INSERT INTO domains (name, soa, domain_metadata_id) VALUES ($1, $2, $3) returning *";
+    let query = "INSERT INTO domains (name, soa, domain_metadata_id, tenant_organization_id) VALUES ($1, $2, $3, $4) returning *";
     match persist_inner_with_metadata(&value, metadata_id, txn, query).await {
         Ok(Some(domain)) => Ok(domain),
         Ok(None) => Err(DatabaseError::NotFoundError {
@@ -114,9 +115,8 @@ pub async fn persist_first(
     validate_domain_name(&value.name)?;
 
     let metadata_id = super::domain_metadata::DbMetadata::create_default(txn).await?;
-
     let query = "
-            INSERT INTO domains (name, soa, domain_metadata_id) SELECT $1, $2, $3
+            INSERT INTO domains (name, soa, domain_metadata_id, tenant_organization_id) SELECT $1, $2, $3, $4
             WHERE NOT EXISTS (SELECT name FROM domains)
             RETURNING *";
     persist_inner_with_metadata(value, metadata_id, txn, query).await
@@ -132,6 +132,7 @@ async fn persist_inner_with_metadata(
         .bind(&value.name)
         .bind(sqlx::types::Json(&value.soa))
         .bind(metadata_id)
+        .bind(&value.tenant_organization_id)
         .fetch_optional(txn)
         .await
         .map(|opt| opt.map(Domain::from))
@@ -204,11 +205,12 @@ pub async fn delete(value: Domain, txn: &mut PgConnection) -> Result<Domain, Dat
 pub async fn update(value: &mut Domain, txn: &mut PgConnection) -> Result<Domain, DatabaseError> {
     validate_domain_name(&value.name)?;
 
-    let query = "UPDATE domains SET name=$1, updated=NOW(), soa=$2 WHERE id=$3 RETURNING *";
+    let query = "UPDATE domains SET name=$1, updated=NOW(), soa=$2, tenant_organization_id=$3 WHERE id=$4 RETURNING *";
 
     sqlx::query_as::<_, DbDomain>(query)
         .bind(&value.name)
         .bind(sqlx::types::Json(&value.soa))
+        .bind(&value.tenant_organization_id)
         .bind(value.id)
         .fetch_one(txn)
         .await

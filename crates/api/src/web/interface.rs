@@ -81,6 +81,7 @@ pub async fn show_html(AxumState(state): AxumState<Arc<Api>>) -> Response {
     let request = tonic::Request::new(::rpc::protos::dns::DomainSearchQuery {
         id: None,
         name: None,
+        tenant_organization_id: None,
     });
     let domain_list = match state
         .find_domain(request)
