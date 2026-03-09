@@ -33,6 +33,7 @@ bmc-mock = { path = "../bmc-mock" }
 
 #these are alphabetized
 askama_escape = { workspace = true }
+better-panic = { version = "0.3.0"}
 ctor = { workspace = true }
 eyre = { workspace = true }
 futures = { workspace = true }

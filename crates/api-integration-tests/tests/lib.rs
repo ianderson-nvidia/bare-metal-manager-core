@@ -43,6 +43,11 @@ fn setup() {
 /// Run multiple machine-a-tron integration tests in parallel against a shared carbide API instance.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_integration() -> eyre::Result<()> {
+
+    better_panic::Settings::debug()
+        .most_recent_first(false)
+        .lineno_suffix(true)
+        .install();
     // NOTE: These tests run two carbide-api servers, and the clients are configured to randomly
     // switch between them on every API call. This helps prevent issues that arise when multiple API
     // severs may be running in production.
