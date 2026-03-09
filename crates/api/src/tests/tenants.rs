@@ -404,7 +404,8 @@ async fn test_find_tenant_ids(pool: sqlx::PgPool) {
         .unwrap()
         .into_inner();
 
-    assert_eq!(find_all_tenants.tenant_organization_ids.len(), 10);
+    // 10 + 2 created during create_test_env_with_overrides()
+    assert_eq!(find_all_tenants.tenant_organization_ids.len(), 12);
 }
 
 async fn create_keyset(

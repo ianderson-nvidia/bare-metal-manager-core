@@ -31,12 +31,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgRow;
 use sqlx::{FromRow, Row};
 
-<<<<<<< HEAD
 use crate::metadata::{LabelFilter, Metadata};
-=======
 use crate::dns::{DnsLabel, normalize_to_dns_label};
-use crate::metadata::Metadata;
->>>>>>> 90d5ae5b (feat(dns): add records table and tenant-owned zone schema)
 use crate::tenant::RoutingProfileType;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
