@@ -68,10 +68,7 @@ use nras::{
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use regex::Regex;
 use rpc::forge::forge_server::Forge;
-use rpc::forge::{
-    HealthReportOverride, InsertHealthReportOverrideRequest, RemoveHealthReportOverrideRequest,
-    VpcVirtualizationType,
-};
+use rpc::forge::{HealthReportOverride, InsertHealthReportOverrideRequest, RemoveHealthReportOverrideRequest, TenantSearchFilter, VpcVirtualizationType};
 use rpc_instance::RpcInstance;
 use site_explorer::new_host_with_machine_validation;
 use sqlx::PgPool;
@@ -1693,11 +1690,40 @@ pub async fn create_test_env_with_overrides(
     }
 
     txn.commit().await.unwrap();
+    // Create tenant orgs
+    let default_tenant_org = "Tenant1";
+    let tenant1 = api
+        .create_tenant(tonic::Request::new(rpc::forge::CreateTenantRequest {
+            organization_id: default_tenant_org.to_string(),
+            routing_profile_type: None,
+            metadata: Some(rpc::forge::Metadata {
+                name: default_tenant_org.to_string(),
+                description: "".to_string(),
+                labels: vec![],
+            }),
+        }))
+        .await
+        .unwrap();
+
+    let tenant_org2 = "Tenant2";
+    let _ = api
+        .create_tenant(tonic::Request::new(rpc::forge::CreateTenantRequest {
+            organization_id: tenant_org2.to_string(),
+            routing_profile_type: None,
+            metadata: Some(rpc::forge::Metadata {
+                name: tenant_org2.to_string(),
+                description: "".to_string(),
+                labels: vec![],
+            }),
+        }))
+        .await
+        .unwrap();
 
     // Create domain
     let domain: carbide_uuid::domain::DomainId = api
         .create_domain(Request::new(rpc::protos::dns::CreateDomainRequest {
             name: "dwrt1.com".to_string(),
+            tenant_organization_id: Some(tenant1.into_inner().tenant.unwrap().organization_id.to_string()),
         }))
         .await
         .unwrap()
@@ -1787,8 +1813,8 @@ pub async fn get_instance_type_fixture_id(env: &TestEnv) -> String {
 
 pub async fn populate_network_security_groups(api: Arc<Api>) {
     // Create tenant orgs
-    let default_tenant_org = "Tenant1";
-    let _ = api
+    //let default_tenant_org = "Tenant1";
+/*    let _ = api
         .create_tenant(tonic::Request::new(rpc::forge::CreateTenantRequest {
             organization_id: default_tenant_org.to_string(),
             routing_profile_type: None,
@@ -1813,7 +1839,29 @@ pub async fn populate_network_security_groups(api: Arc<Api>) {
             }),
         }))
         .await
-        .unwrap();
+        .unwrap();*/
+
+    let default_tenant_org = api.find_tenant_organization_ids(tonic::Request::new(TenantSearchFilter{
+        tenant_organization_name: Some("Tenant1".to_string())
+    }))
+        .await
+        .expect("find_tenant_organization_ids failed")
+        .into_inner()
+        .tenant_organization_ids
+        .into_iter()
+        .next()
+        .expect("no tenant found with name 'Tenant'");
+
+    let tenant_org2 = api.find_tenant_organization_ids(tonic::Request::new(TenantSearchFilter{
+        tenant_organization_name: Some("Tenant2".to_string())
+    }))
+        .await
+        .expect("find_tenant_organization_ids failed")
+        .into_inner()
+        .tenant_organization_ids
+        .into_iter()
+        .next()
+        .expect("no tenant found with name 'Tenant2'");
 
     // Create default network security groups.
     let mut txn = api.txn_begin().await.unwrap();
@@ -1848,7 +1896,8 @@ pub async fn populate_network_security_groups(api: Arc<Api>) {
 
     let id = uid.parse().unwrap();
 
-    let tenant_org = default_tenant_org.parse::<TenantOrganizationId>().unwrap();
+    //let tenant_org = default_tenant_org.parse::<TenantOrganizationId>().unwrap();
+    let tenant_org = TenantOrganizationId::from_str(default_tenant_org.as_str()).unwrap();
 
     let _it =
         create_network_security_group(&mut txn, &id, &tenant_org, None, &metadata, false, &rules)
@@ -1883,7 +1932,8 @@ pub async fn populate_network_security_groups(api: Arc<Api>) {
     let _it = create_network_security_group(
         &mut txn,
         &id,
-        &tenant_org2.parse::<TenantOrganizationId>().unwrap(),
+       // &tenant_org2.parse::<TenantOrganizationId>().unwrap(),
+        &TenantOrganizationId::from_str(&tenant_org2).unwrap(),
         None,
         &metadata,
         false,

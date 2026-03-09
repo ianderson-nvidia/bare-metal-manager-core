@@ -168,6 +168,7 @@ pub async fn create_network_segment(
         let request = ::rpc::protos::dns::DomainSearchQuery {
             id: None,
             name: Some("dwrt1.com".to_string()),
+            tenant_organization_id: None,
         };
 
         let domain = api
