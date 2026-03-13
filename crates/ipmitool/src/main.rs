@@ -65,6 +65,18 @@ async fn main() -> eyre::Result<()> {
         CliCommand::Mc { command } => {
             ipmitool::cli::mc::run(&mut transport, command).await
         }
+        CliCommand::Sdr { command } => {
+            ipmitool::cli::sdr::run(&mut transport, command).await
+        }
+        CliCommand::Sel { command } => {
+            ipmitool::cli::sel::run(&mut transport, command).await
+        }
+        CliCommand::Fru { command } => {
+            ipmitool::cli::fru::run(&mut transport, command).await
+        }
+        CliCommand::Sensor { command } => {
+            ipmitool::cli::sensor::run(&mut transport, command).await
+        }
     };
 
     // Always attempt to close the session, even if the command failed.

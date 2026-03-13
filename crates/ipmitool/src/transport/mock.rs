@@ -72,6 +72,56 @@ impl IpmiTransport for MockTransport {
     }
 }
 
+/// A queue-based mock transport for tests that need multiple responses
+/// for the same (netfn, cmd) pair (e.g., SDR/SEL iteration).
+///
+/// Responses are returned in FIFO order, regardless of the (netfn, cmd) key.
+/// This is simpler than the keyed `MockTransport` but sufficient for
+/// sequential command tests.
+pub struct QueueMockTransport {
+    responses: Vec<(u8, u8, Vec<u8>)>,
+    index: usize,
+}
+
+impl QueueMockTransport {
+    /// Create a new queue-based mock transport.
+    pub fn new() -> Self {
+        Self {
+            responses: Vec::new(),
+            index: 0,
+        }
+    }
+
+    /// Enqueue a response for a given (netfn, cmd) pair.
+    ///
+    /// Responses are returned in the order they were enqueued. The netfn/cmd
+    /// values are stored for diagnostic purposes but the queue is strictly
+    /// FIFO — no key matching is performed.
+    pub fn enqueue(&mut self, netfn: u8, cmd: u8, response_bytes: Vec<u8>) {
+        self.responses.push((netfn, cmd, response_bytes));
+    }
+}
+
+impl IpmiTransport for QueueMockTransport {
+    async fn send_recv(&mut self, req: &IpmiRequest) -> Result<IpmiResponse> {
+        if self.index >= self.responses.len() {
+            let netfn: u8 = req.netfn.into();
+            return Err(IpmitoolError::Transport(format!(
+                "QueueMockTransport: no more responses (index={}, netfn=0x{:02X} cmd=0x{:02X})",
+                self.index, netfn, req.cmd
+            )));
+        }
+
+        let (_, _, ref response_bytes) = self.responses[self.index];
+        self.index += 1;
+        IpmiResponse::from_bytes(response_bytes)
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

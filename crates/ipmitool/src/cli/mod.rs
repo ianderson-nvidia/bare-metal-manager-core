@@ -21,8 +21,12 @@
 //! commands to the corresponding handlers in submodules.
 
 pub mod chassis;
+pub mod fru;
 pub mod mc;
 pub mod raw;
+pub mod sdr;
+pub mod sel;
+pub mod sensor;
 
 use clap::Parser;
 
@@ -84,5 +88,25 @@ pub enum CliCommand {
     Mc {
         #[command(subcommand)]
         command: mc::McCommand,
+    },
+    /// Sensor Data Repository operations.
+    Sdr {
+        #[command(subcommand)]
+        command: sdr::SdrCommand,
+    },
+    /// System Event Log operations.
+    Sel {
+        #[command(subcommand)]
+        command: sel::SelCommand,
+    },
+    /// FRU inventory operations.
+    Fru {
+        #[command(subcommand)]
+        command: fru::FruCommand,
+    },
+    /// Sensor reading and threshold operations.
+    Sensor {
+        #[command(subcommand)]
+        command: sensor::SensorCommand,
     },
 }

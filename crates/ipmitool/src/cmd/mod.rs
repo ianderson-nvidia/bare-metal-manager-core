@@ -21,5 +21,9 @@
 //! using the [`IpmiTransport`](crate::transport::IpmiTransport) trait.
 
 pub mod chassis;
+pub mod fru;
 pub mod mc;
 pub mod raw;
+pub mod sdr;
+pub mod sel;
+pub mod sensor;
