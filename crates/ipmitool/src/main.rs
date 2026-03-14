@@ -77,9 +77,15 @@ async fn main() -> eyre::Result<()> {
         CliCommand::Sensor { command } => {
             ipmitool::cli::sensor::run(&mut transport, command).await
         }
-        CliCommand::Sol { command } => {
-            ipmitool::cli::sol::run(&mut transport, command).await
-        }
+        CliCommand::Sol { command } => match command {
+            ipmitool::cli::sol::SolCommand::Activate { instance } => {
+                transport
+                    .run_sol_interactive(instance)
+                    .await
+                    .context("SOL interactive session")
+            }
+            other => ipmitool::cli::sol::run(&mut transport, other).await,
+        },
         CliCommand::User { command } => {
             ipmitool::cli::user::run(&mut transport, command).await
         }

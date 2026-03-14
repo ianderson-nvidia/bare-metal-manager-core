@@ -27,6 +27,7 @@ pub mod header;
 pub mod packet;
 pub mod rakp;
 pub mod session;
+pub mod sol;
 
 use std::time::Duration;
 
@@ -343,6 +344,7 @@ impl IpmiTransport for LanplusTransport {
 
         // Build the authenticated packet.
         let packet = build_authenticated_packet(
+            PayloadType::Ipmi,
             managed_sid,
             seq,
             &ipmi_msg,
@@ -418,7 +420,7 @@ fn generate_nonzero_session_id() -> u32 {
 }
 
 /// Compute the integrity check value for the given algorithm and key.
-fn compute_integrity(
+pub(crate) fn compute_integrity(
     alg: IntegrityAlgorithm,
     k1: &[u8],
     data: &[u8],

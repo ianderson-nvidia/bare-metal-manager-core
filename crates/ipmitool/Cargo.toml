@@ -34,9 +34,11 @@ byteorder = { workspace = true }
 bytes = { workspace = true }
 cbc = { workspace = true }
 clap = { workspace = true }
+crossterm = { workspace = true, features = ["event-stream"] }
 color-eyre = { workspace = true }
 digest = { workspace = true }
 eyre = { workspace = true }
+futures = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }
 md-5 = { workspace = true }

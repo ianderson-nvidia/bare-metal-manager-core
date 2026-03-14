@@ -17,9 +17,12 @@
 
 //! CLI subcommands for Serial-over-LAN (SOL) operations.
 //!
-//! Provides info, activate/deactivate, and configuration commands. The actual
-//! bidirectional interactive terminal session is not yet implemented — it
-//! requires transport-level SOL payload handling with async I/O.
+//! Provides info, activate/deactivate, and configuration commands. The
+//! interactive SOL terminal (`Activate`) is handled directly by `main.rs`
+//! via [`LanplusTransport::run_sol_interactive`], since it needs access to the
+//! concrete transport type. The `Activate` arm here is retained for library
+//! callers that use `run()` generically — it activates the payload but does
+//! not run the interactive session.
 
 use eyre::Context;
 
@@ -113,6 +116,11 @@ pub async fn run(
             println!("  Volatile Rate      : {}", config.volatile_bit_rate);
             Ok(())
         }
+        // NOTE: The CLI binary intercepts `Activate` in `main.rs` and calls
+        // `LanplusTransport::run_sol_interactive()` directly. This arm is
+        // only reachable by library callers using `run()` with a generic
+        // transport — it activates the payload but does not start the
+        // interactive terminal.
         SolCommand::Activate { instance } => {
             let activation = sol::activate_sol(transport, instance, true, true)
                 .await
@@ -137,13 +145,9 @@ pub async fn run(
                 }
             );
 
-            // TODO: Implement bidirectional interactive SOL terminal with
-            // transport-level SOL payload handling and CancellationToken for
-            // graceful shutdown. This requires sending/receiving SOL payload
-            // type 0x01 packets over the RMCP+ session, which is beyond
-            // the current IPMI command-layer abstraction.
             println!();
-            println!("Interactive SOL terminal not yet implemented. Use `sol deactivate` to clean up.");
+            println!("Payload activated (no interactive terminal via generic transport).");
+            println!("Use `sol deactivate` to clean up.");
             Ok(())
         }
         SolCommand::Deactivate { instance } => {

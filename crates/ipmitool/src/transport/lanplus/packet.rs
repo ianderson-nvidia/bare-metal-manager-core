@@ -76,6 +76,7 @@ pub fn build_pre_session_packet(payload_type: PayloadType, payload: &[u8]) -> Ve
 ///
 /// Returns an error if encryption or integrity computation fails.
 pub fn build_authenticated_packet(
+    payload_type: PayloadType,
     session_id: u32,
     session_seq: u32,
     payload: &[u8],
@@ -88,7 +89,7 @@ pub fn build_authenticated_packet(
     let encrypted_payload = encrypt_fn(payload)?;
 
     let mut session =
-        SessionHeader::authenticated(PayloadType::Ipmi, session_id, session_seq);
+        SessionHeader::authenticated(payload_type, session_id, session_seq);
     session.payload_length = encrypted_payload.len() as u16;
 
     // Build the packet up through the payload.
@@ -294,6 +295,7 @@ mod tests {
         // Use identity "encryption" and fixed "integrity" for testing.
         let payload = vec![0x01, 0x02, 0x03];
         let packet = build_authenticated_packet(
+            PayloadType::Ipmi,
             0xDEADBEEF,
             1,
             &payload,
@@ -323,6 +325,7 @@ mod tests {
         let payload = vec![0x01, 0x02, 0x03, 0x04, 0x05];
         let auth_code_len = 16;
         let packet = build_authenticated_packet(
+            PayloadType::Ipmi,
             0x12345678,
             42,
             &payload,
@@ -348,6 +351,7 @@ mod tests {
         let payload = vec![0x01, 0x02];
         let auth_code_len = 12;
         let packet = build_authenticated_packet(
+            PayloadType::Ipmi,
             1,
             1,
             &payload,
@@ -373,6 +377,7 @@ mod tests {
         let payload = vec![0x01, 0x02];
         let auth_code_len = 12;
         let packet = build_authenticated_packet(
+            PayloadType::Ipmi,
             1,
             1,
             &payload,

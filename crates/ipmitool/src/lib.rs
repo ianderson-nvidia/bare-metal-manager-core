@@ -44,6 +44,7 @@ pub mod cli;
 pub mod cmd;
 pub mod crypto;
 pub mod error;
+pub mod sol;
 pub mod transport;
 pub mod types;
 
