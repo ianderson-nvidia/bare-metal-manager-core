@@ -53,6 +53,10 @@ pub struct Cli {
     #[arg(short = 'E')]
     pub env_password: bool,
 
+    /// Remote RMCP port.
+    #[arg(short = 'p', long, default_value = "623")]
+    pub port: u16,
+
     /// Interface type: "lanplus" (IPMI v2.0 RMCP+) or "lan" (IPMI v1.5).
     #[arg(short = 'I', long, default_value = "lanplus")]
     pub interface: String,
@@ -68,6 +72,10 @@ pub struct Cli {
     /// Number of retries.
     #[arg(short = 'R', long, default_value = "3")]
     pub retries: u32,
+
+    /// SOL escape character (default: ~).
+    #[arg(short = 'e', long = "escape-char", default_value = "~")]
+    pub escape_char: char,
 
     /// Increase verbosity (-v, -vv, -vvv).
     #[arg(short, long, action = clap::ArgAction::Count)]

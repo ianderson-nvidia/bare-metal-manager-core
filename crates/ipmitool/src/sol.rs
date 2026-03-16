@@ -97,22 +97,31 @@ impl SolPayload {
 // Escape Sequence State Machine
 // ==============================================================================
 
-/// State machine for processing `~`-prefixed escape sequences during an
+/// State machine for processing escape-character-prefixed sequences during an
 /// interactive SOL session, following the SSH/screen convention.
 ///
-/// Recognized sequences (all require `~` immediately after a newline):
-/// - `~.` — disconnect
-/// - `~~` — send a literal `~`
-/// - `~?` — print help
-/// - `~B` — send serial BREAK
+/// The escape character defaults to `~` but can be changed via `-e`. Recognized
+/// sequences (all require the escape char immediately after a newline):
+/// - `<esc>.` — disconnect
+/// - `<esc><esc>` — send a literal escape char
+/// - `<esc>?` — print help
+/// - `<esc>B` — send serial BREAK
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EscapeState {
+pub struct EscapeState {
+    phase: EscapePhase,
+    /// The escape character (default `~`).
+    escape_char: u8,
+}
+
+/// Internal phase of the escape state machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EscapePhase {
     /// Normal character processing — no pending escape.
     Normal,
-    /// A newline (`\r` or `\n`) was just seen; `~` is eligible as an escape prefix.
+    /// A newline (`\r` or `\n`) was just seen; escape char is eligible as prefix.
     AfterNewline,
-    /// A `~` was seen immediately after a newline; waiting for the command character.
-    AfterTilde,
+    /// Escape char was seen immediately after a newline; waiting for the command character.
+    AfterEscape,
 }
 
 /// Action to take after processing a byte through the escape state machine.
@@ -132,17 +141,30 @@ pub enum EscapeAction {
 
 impl Default for EscapeState {
     fn default() -> Self {
-        Self::AfterNewline
+        Self::with_escape_char(b'~')
     }
 }
 
 impl EscapeState {
-    /// Create a new escape state machine.
+    /// Create a new escape state machine with the default escape character (`~`).
     ///
-    /// Starts in [`EscapeState::AfterNewline`] so that `~.` works at the very
+    /// Starts in `AfterNewline` so that the escape sequence works at the very
     /// beginning of a session without requiring a preceding newline.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create a new escape state machine with a custom escape character.
+    pub fn with_escape_char(escape_char: u8) -> Self {
+        Self {
+            phase: EscapePhase::AfterNewline,
+            escape_char,
+        }
+    }
+
+    /// Returns the configured escape character.
+    pub fn escape_char(&self) -> u8 {
+        self.escape_char
     }
 
     /// Process a single input byte, returning the action to take.
@@ -150,52 +172,53 @@ impl EscapeState {
     /// The caller is responsible for acting on the returned [`EscapeAction`]:
     /// sending bytes to the BMC, disconnecting, generating a BREAK, etc.
     pub fn process(&mut self, byte: u8) -> EscapeAction {
-        match self {
-            Self::Normal => {
+        let esc = self.escape_char;
+        match self.phase {
+            EscapePhase::Normal => {
                 if byte == b'\r' || byte == b'\n' {
-                    *self = Self::AfterNewline;
+                    self.phase = EscapePhase::AfterNewline;
                 }
                 EscapeAction::SendBytes(vec![byte])
             }
 
-            Self::AfterNewline => {
-                if byte == b'~' {
-                    // Buffer the tilde — don't send it yet until we see the
-                    // next character to determine if this is an escape sequence.
-                    *self = Self::AfterTilde;
+            EscapePhase::AfterNewline => {
+                if byte == esc {
+                    // Buffer the escape char — don't send it yet until we see
+                    // the next character to determine if this is a sequence.
+                    self.phase = EscapePhase::AfterEscape;
                     EscapeAction::None
                 } else if byte == b'\r' || byte == b'\n' {
                     // Consecutive newlines — stay in AfterNewline.
                     EscapeAction::SendBytes(vec![byte])
                 } else {
-                    *self = Self::Normal;
+                    self.phase = EscapePhase::Normal;
                     EscapeAction::SendBytes(vec![byte])
                 }
             }
 
-            Self::AfterTilde => match byte {
+            EscapePhase::AfterEscape => match byte {
                 b'.' => {
-                    *self = Self::Normal;
+                    self.phase = EscapePhase::Normal;
                     EscapeAction::Disconnect
                 }
-                b'~' => {
-                    // Literal tilde — send just one `~`.
-                    *self = Self::Normal;
-                    EscapeAction::SendBytes(vec![b'~'])
+                b if b == esc => {
+                    // Literal escape char — send just one.
+                    self.phase = EscapePhase::Normal;
+                    EscapeAction::SendBytes(vec![esc])
                 }
                 b'?' => {
-                    *self = Self::AfterNewline;
+                    self.phase = EscapePhase::AfterNewline;
                     EscapeAction::PrintHelp
                 }
                 b'B' => {
-                    *self = Self::AfterNewline;
+                    self.phase = EscapePhase::AfterNewline;
                     EscapeAction::SendBreak
                 }
                 _ => {
-                    // Not a recognized escape — flush the buffered tilde
+                    // Not a recognized escape — flush the buffered escape char
                     // along with this byte.
-                    *self = Self::Normal;
-                    EscapeAction::SendBytes(vec![b'~', byte])
+                    self.phase = EscapePhase::Normal;
+                    EscapeAction::SendBytes(vec![esc, byte])
                 }
             },
         }
@@ -292,12 +315,10 @@ mod tests {
         // Send a regular character from the initial AfterNewline state.
         let action = state.process(b'a');
         assert_eq!(action, EscapeAction::SendBytes(vec![b'a']));
-        assert_eq!(state, EscapeState::Normal);
 
-        // Subsequent regular characters stay in Normal.
+        // Subsequent regular characters pass through.
         let action = state.process(b'b');
         assert_eq!(action, EscapeAction::SendBytes(vec![b'b']));
-        assert_eq!(state, EscapeState::Normal);
     }
 
     #[test]
@@ -306,15 +327,12 @@ mod tests {
 
         // Type some normal text first, then \r~.
         state.process(b'x');
-        assert_eq!(state, EscapeState::Normal);
 
         let action = state.process(b'\r');
         assert_eq!(action, EscapeAction::SendBytes(vec![b'\r']));
-        assert_eq!(state, EscapeState::AfterNewline);
 
         let action = state.process(b'~');
         assert_eq!(action, EscapeAction::None);
-        assert_eq!(state, EscapeState::AfterTilde);
 
         let action = state.process(b'.');
         assert_eq!(action, EscapeAction::Disconnect);
@@ -328,7 +346,6 @@ mod tests {
         state.process(b'~');
         let action = state.process(b'~');
         assert_eq!(action, EscapeAction::SendBytes(vec![b'~']));
-        assert_eq!(state, EscapeState::Normal);
     }
 
     #[test]
@@ -339,7 +356,6 @@ mod tests {
         state.process(b'~');
         let action = state.process(b'?');
         assert_eq!(action, EscapeAction::PrintHelp);
-        assert_eq!(state, EscapeState::AfterNewline);
     }
 
     #[test]
@@ -350,7 +366,6 @@ mod tests {
         state.process(b'~');
         let action = state.process(b'B');
         assert_eq!(action, EscapeAction::SendBreak);
-        assert_eq!(state, EscapeState::AfterNewline);
     }
 
     #[test]
@@ -359,12 +374,10 @@ mod tests {
 
         // Move to Normal state first.
         state.process(b'x');
-        assert_eq!(state, EscapeState::Normal);
 
         // Tilde in Normal state is just a regular character.
         let action = state.process(b'~');
         assert_eq!(action, EscapeAction::SendBytes(vec![b'~']));
-        assert_eq!(state, EscapeState::Normal);
 
         // The `.` after it is also just a regular character.
         let action = state.process(b'.');
@@ -375,11 +388,29 @@ mod tests {
     fn escape_tilde_dot_at_session_start() {
         // The initial state is AfterNewline, so ~. should work immediately.
         let mut state = EscapeState::new();
-        assert_eq!(state, EscapeState::AfterNewline);
 
         let action = state.process(b'~');
         assert_eq!(action, EscapeAction::None);
 
+        let action = state.process(b'.');
+        assert_eq!(action, EscapeAction::Disconnect);
+    }
+
+    #[test]
+    fn escape_custom_char() {
+        // Use '^' instead of '~' as the escape character.
+        let mut state = EscapeState::with_escape_char(b'^');
+
+        // ~ is no longer special — passes through.
+        state.process(b'\r');
+        let action = state.process(b'~');
+        assert_eq!(action, EscapeAction::SendBytes(vec![b'~']));
+
+        // ^ after newline triggers escape mode.
+        let action = state.process(b'\r');
+        assert_eq!(action, EscapeAction::SendBytes(vec![b'\r']));
+        let action = state.process(b'^');
+        assert_eq!(action, EscapeAction::None);
         let action = state.process(b'.');
         assert_eq!(action, EscapeAction::Disconnect);
     }

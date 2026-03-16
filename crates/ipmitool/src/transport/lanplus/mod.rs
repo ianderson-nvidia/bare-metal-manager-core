@@ -34,7 +34,7 @@ use std::time::Duration;
 use byteorder::{ByteOrder, LittleEndian};
 use rand::Rng;
 use tokio::net::UdpSocket;
-use tracing::{debug, instrument, warn};
+use tracing::{debug, instrument, trace, warn};
 
 use self::header::{IpmiMsgHeader, PayloadType};
 use self::packet::{build_authenticated_packet, build_pre_session_packet, parse_packet};
@@ -110,6 +110,21 @@ impl LanplusTransport {
             rq_seq: 0,
         };
 
+        // The C `ipmitool` sends two pre-handshake messages before starting
+        // RMCP+. Some BMCs (notably HP iLO) will silently drop the Open
+        // Session Request without them:
+        //
+        // 1. ASF Presence Ping/Pong — confirms the BMC is listening on the
+        //    RMCP port.
+        // 2. Get Channel Authentication Capabilities — an IPMI v1.5 message
+        //    that queries which auth types and IPMI versions the channel
+        //    supports. This appears to prime the BMC for the subsequent
+        //    RMCP+ session.
+        //
+        // Both are best-effort: if a BMC doesn't respond we continue anyway.
+        transport.asf_ping().await;
+        transport.get_channel_auth_capabilities_v15().await;
+
         transport.run_rakp_handshake().await?;
 
         Ok(transport)
@@ -128,6 +143,86 @@ impl LanplusTransport {
             IntegrityAlgorithm::HmacSha1_96 => 12,
             IntegrityAlgorithm::HmacMd5_128 | IntegrityAlgorithm::Md5_128 => 16,
             IntegrityAlgorithm::HmacSha256_128 => 16,
+        }
+    }
+
+    // ==========================================================================
+    // ASF Presence Ping
+    // ==========================================================================
+
+    /// Send an ASF Presence Ping and wait for a Pong.
+    ///
+    /// The ASF (Alert Standard Forum) Presence Ping is a 12-byte UDP message
+    /// that many BMCs expect before accepting RMCP+ sessions. The C `ipmitool`
+    /// always sends this before starting the RAKP handshake.
+    ///
+    /// If the BMC doesn't respond within a short timeout, we log a warning and
+    /// continue — some BMCs don't need or respond to this ping.
+    async fn asf_ping(&self) {
+        // ASF Presence Ping:
+        //   RMCP header:  06 00 FF 06  (class 0x06 = ASF)
+        //   IANA number:  00 00 11 BE  (ASF IANA enterprise = 4542)
+        //   Message type: 80           (Presence Ping)
+        //   Message tag:  00
+        //   Reserved:     00
+        //   Data length:  00
+        const ASF_PING: [u8; 12] = [
+            0x06, 0x00, 0xFF, 0x06, // RMCP header (ASF class)
+            0x00, 0x00, 0x11, 0xBE, // IANA enterprise number
+            0x80, // Presence Ping
+            0x00, // message tag
+            0x00, // reserved
+            0x00, // data length
+        ];
+
+        if let Err(e) = self.socket.send(&ASF_PING).await {
+            warn!(error = %e, "failed to send ASF Presence Ping");
+            return;
+        }
+
+        let mut buf = [0u8; MAX_PACKET_SIZE];
+        match tokio::time::timeout(Duration::from_secs(2), self.socket.recv(&mut buf)).await {
+            Ok(Ok(_)) => debug!("ASF Presence Pong received"),
+            Ok(Err(e)) => warn!(error = %e, "ASF Presence Ping recv error"),
+            Err(_) => debug!("no ASF Pong received (continuing anyway)"),
+        }
+    }
+
+    // ==========================================================================
+    // Get Channel Auth Capabilities (IPMI v1.5 pre-session)
+    // ==========================================================================
+
+    /// Send a Get Channel Authentication Capabilities request as an IPMI v1.5
+    /// message (RMCP class 0x07, not 0x87).
+    ///
+    /// The C `ipmitool` always sends this before the RMCP+ Open Session
+    /// Request, even for lanplus connections. Some BMCs (HP iLO) appear to
+    /// require it. The response is not parsed — we only care that the BMC
+    /// processes the request so it's ready for RMCP+.
+    async fn get_channel_auth_capabilities_v15(&self) {
+        // IPMI v1.5 packet: RMCP header (class 0x07) + auth_type=None +
+        // session_seq=0 + session_id=0 + payload_len + IPMI message.
+        //
+        // The IPMI message is Get Channel Auth Caps (NetFn=App 0x06,
+        // Cmd=0x38) with data [channel=0x8E, privilege=0x04]. Bit 7 of the
+        // channel byte requests IPMI v2.0 extended data in the response.
+        use crate::transport::lan::packet::build_v15_packet;
+        use crate::transport::lan::auth::AuthType;
+
+        let ipmi_msg = IpmiMsgHeader::request(0x06, 0x38, 0x00)
+            .build_message(&[0x8E, PrivilegeLevel::Administrator as u8]);
+        let packet = build_v15_packet(AuthType::None, 0, 0, None, &ipmi_msg);
+
+        if let Err(e) = self.socket.send(&packet).await {
+            warn!(error = %e, "failed to send Get Channel Auth Capabilities");
+            return;
+        }
+
+        let mut buf = [0u8; MAX_PACKET_SIZE];
+        match tokio::time::timeout(Duration::from_secs(2), self.socket.recv(&mut buf)).await {
+            Ok(Ok(_)) => debug!("Get Channel Auth Capabilities response received"),
+            Ok(Err(e)) => warn!(error = %e, "Get Channel Auth Capabilities recv error"),
+            Err(_) => debug!("no Get Channel Auth Capabilities response (continuing anyway)"),
         }
     }
 
@@ -264,6 +359,25 @@ impl LanplusTransport {
             ),
         };
 
+        // After the RAKP handshake, explicitly set the session privilege
+        // level to Administrator. Without this, the BMC may leave the
+        // session at a lower privilege and reject write operations (e.g.
+        // chassis power control) with completion code 0xD4.
+        let priv_req = IpmiRequest::with_data(
+            NetFn::App,
+            0x3B, // Set Session Privilege Level
+            vec![privilege as u8],
+        );
+        let priv_resp = self.send_recv(&priv_req).await
+            .map_err(|e| IpmitoolError::Transport(format!(
+                "Set Session Privilege Level failed: {e}"
+            )))?;
+        priv_resp.check_completion()
+            .map_err(|e| IpmitoolError::Transport(format!(
+                "Set Session Privilege Level rejected: {e}"
+            )))?;
+        debug!("privilege level set to Administrator");
+
         Ok(())
     }
 
@@ -277,6 +391,8 @@ impl LanplusTransport {
         let max_retries = self.config.retries;
         let mut timeout = INITIAL_TIMEOUT;
 
+        trace!(len = packet.len(), hex = hex::encode(packet), "sending RMCP+ packet");
+
         for attempt in 0..=max_retries {
             self.socket.send(packet).await?;
 
@@ -284,6 +400,7 @@ impl LanplusTransport {
             match tokio::time::timeout(timeout, self.socket.recv(&mut buf)).await {
                 Ok(Ok(n)) => {
                     buf.truncate(n);
+                    trace!(len = n, hex = hex::encode(&buf), "received RMCP+ packet");
                     return Ok(buf);
                 }
                 Ok(Err(e)) => return Err(IpmitoolError::Io(e)),

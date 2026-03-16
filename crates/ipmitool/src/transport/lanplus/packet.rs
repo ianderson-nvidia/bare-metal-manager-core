@@ -262,7 +262,7 @@ mod tests {
 
         // Verify RMCP header.
         let rmcp = RmcpHeader::from_bytes(&packet[0..4]).expect("valid rmcp");
-        assert!(rmcp.is_rmcpplus());
+        assert!(rmcp.is_ipmi_class());
 
         // Verify session header.
         let session = SessionHeader::from_bytes(&packet[4..16]).expect("valid session");
@@ -284,7 +284,7 @@ mod tests {
         let packet = build_pre_session_packet(PayloadType::Rakp1, &payload);
 
         let parsed = parse_packet(&packet, 0).expect("valid packet");
-        assert!(parsed.rmcp.is_rmcpplus());
+        assert!(parsed.rmcp.is_ipmi_class());
         assert_eq!(parsed.session.payload_type(), Ok(PayloadType::Rakp1));
         assert_eq!(parsed.payload, &payload);
         assert!(parsed.auth_code.is_none());
@@ -306,7 +306,7 @@ mod tests {
 
         // Verify RMCP header.
         let rmcp = RmcpHeader::from_bytes(&packet[0..4]).expect("valid rmcp");
-        assert!(rmcp.is_rmcpplus());
+        assert!(rmcp.is_ipmi_class());
 
         // Verify session header.
         let session = SessionHeader::from_bytes(&packet[4..16]).expect("valid session");

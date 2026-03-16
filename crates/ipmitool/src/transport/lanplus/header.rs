@@ -46,9 +46,6 @@ pub const RMCP_VERSION: u8 = 0x06;
 /// RMCP message class: IPMI.
 pub const RMCP_CLASS_IPMI: u8 = 0x07;
 
-/// RMCP+ message class bit (ASF 2.0 format, set in class byte).
-pub const RMCP_CLASS_RMCPPLUS_BIT: u8 = 0x80;
-
 /// RMCP header (4 bytes at the start of every RMCP message).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RmcpHeader {
@@ -68,11 +65,17 @@ impl RmcpHeader {
     };
 
     /// RMCP header for RMCP+ (IPMI v2.0) messages.
+    ///
+    /// Per IPMI v2.0 spec section 13.1.3, the RMCP class field is 0x07 for
+    /// both IPMI v1.5 and RMCP+ messages. The RMCP+ format is indicated by
+    /// auth_type = 0x06 in the session header, NOT by a bit in the RMCP
+    /// class byte. The 0x80 bit in the class byte is the RMCP ACK bit, not
+    /// an RMCP+ indicator.
     pub const RMCPPLUS: Self = Self {
         version: RMCP_VERSION,
         reserved: 0x00,
         sequence: 0xFF,
-        class: RMCP_CLASS_IPMI | RMCP_CLASS_RMCPPLUS_BIT,
+        class: RMCP_CLASS_IPMI,
     };
 
     /// Serialize to 4 bytes.
@@ -106,10 +109,10 @@ impl RmcpHeader {
         })
     }
 
-    /// Returns `true` if this is an RMCP+ format message.
+    /// Returns `true` if this header has the RMCP class set to IPMI (0x07).
     #[must_use]
-    pub fn is_rmcpplus(&self) -> bool {
-        (self.class & RMCP_CLASS_RMCPPLUS_BIT) != 0
+    pub fn is_ipmi_class(&self) -> bool {
+        (self.class & 0x7F) == RMCP_CLASS_IPMI
     }
 }
 
@@ -425,13 +428,16 @@ mod tests {
         let bytes = header.as_bytes();
         let parsed = RmcpHeader::from_bytes(&bytes).expect("valid header");
         assert_eq!(header, parsed);
-        assert!(parsed.is_rmcpplus());
+        assert!(parsed.is_ipmi_class());
+        // RMCPPLUS and IPMI constants are identical — RMCP+ is indicated by
+        // auth_type=0x06 in the session header, not by the RMCP class byte.
+        assert_eq!(RmcpHeader::RMCPPLUS, RmcpHeader::IPMI);
     }
 
     #[test]
-    fn rmcp_header_ipmi_not_rmcpplus() {
+    fn rmcp_header_ipmi_class() {
         let header = RmcpHeader::IPMI;
-        assert!(!header.is_rmcpplus());
+        assert!(header.is_ipmi_class());
     }
 
     #[test]

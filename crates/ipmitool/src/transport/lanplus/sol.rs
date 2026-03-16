@@ -57,19 +57,33 @@ impl LanplusTransport {
     /// Returns an error if SOL activation fails, terminal raw mode cannot
     /// be entered, or a fatal I/O or protocol error occurs during the
     /// session.
-    pub async fn run_sol_interactive(&mut self, instance: u8) -> eyre::Result<()> {
+    pub async fn run_sol_interactive(&mut self, instance: u8, escape_char: u8) -> eyre::Result<()> {
         // Activate the SOL payload on the BMC so it begins accepting
-        // SOL data packets on this session.
-        let _activation = crate::cmd::sol::activate_sol(self, instance, true, true)
-            .await
-            .context("activate SOL payload")?;
+        // SOL data packets on this session. If activation fails with 0x80
+        // ("payload already active"), deactivate the stale session and retry.
+        let _activation = match crate::cmd::sol::activate_sol(self, instance, true, true).await {
+            Ok(a) => a,
+            Err(crate::error::IpmitoolError::CompletionCode(
+                crate::types::CompletionCode::Unknown(0x80),
+            )) => {
+                eprintln!("[SOL payload already active on another session \u{2014} deactivating]");
+                crate::cmd::sol::deactivate_sol(self, instance)
+                    .await
+                    .context("deactivate stale SOL payload")?;
+                crate::cmd::sol::activate_sol(self, instance, true, true)
+                    .await
+                    .context("activate SOL payload (retry after deactivate)")?
+            }
+            Err(e) => return Err(e).context("activate SOL payload"),
+        };
 
         // Enter raw mode so keystrokes are delivered immediately without
         // line-buffering or echo. The guard restores the terminal on drop.
         let _raw_guard = crate::sol::RawModeGuard::enter()
             .context("enable terminal raw mode")?;
 
-        eprintln!("[SOL session connected \u{2014} ~? for help]");
+        let esc = escape_char as char;
+        eprintln!("[SOL session connected \u{2014} {esc}? for help]");
 
         // ======================================================================
         // Extract session crypto parameters
@@ -98,7 +112,7 @@ impl LanplusTransport {
         let socket = &self.socket;
         let mut recv_buf = vec![0u8; 1024];
         let mut event_stream = EventStream::new();
-        let mut escape_state = crate::sol::EscapeState::new();
+        let mut escape_state = crate::sol::EscapeState::with_escape_char(escape_char);
         // SOL sequence numbers wrap 1-15 (0 is reserved for ack-only).
         let mut sol_seq: u8 = 1;
         let mut stdout = tokio::io::stdout();
@@ -279,10 +293,10 @@ impl LanplusTransport {
                             crate::sol::EscapeAction::PrintHelp => {
                                 eprintln!();
                                 eprintln!("SOL session escape sequences:");
-                                eprintln!("  ~.  \u{2014} disconnect");
-                                eprintln!("  ~B  \u{2014} send break");
-                                eprintln!("  ~~  \u{2014} send literal ~");
-                                eprintln!("  ~?  \u{2014} this help");
+                                eprintln!("  {esc}.  \u{2014} disconnect");
+                                eprintln!("  {esc}B  \u{2014} send break");
+                                eprintln!("  {esc}{esc}  \u{2014} send literal {esc}");
+                                eprintln!("  {esc}?  \u{2014} this help");
                             }
                             crate::sol::EscapeAction::None => {}
                         }

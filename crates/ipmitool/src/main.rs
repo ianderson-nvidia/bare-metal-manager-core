@@ -44,12 +44,12 @@ async fn main() -> eyre::Result<()> {
 
     let config = ConnectionConfig {
         host: cli.host.clone(),
+        port: cli.port,
         username: cli.username.clone(),
         password,
         cipher_suite: cli.cipher_suite,
         timeout_secs: cli.timeout,
         retries: cli.retries,
-        ..Default::default()
     };
 
     let mut transport = match cli.interface.as_str() {
@@ -96,7 +96,8 @@ async fn main() -> eyre::Result<()> {
                 // encrypted, bidirectional payload channel.
                 match &mut transport {
                     Transport::Lanplus(t) => {
-                        t.run_sol_interactive(instance)
+                        let esc = cli.escape_char as u8;
+                        t.run_sol_interactive(instance, esc)
                             .await
                             .context("SOL interactive session")
                     }

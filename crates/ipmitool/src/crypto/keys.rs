@@ -67,9 +67,12 @@ pub fn derive_sik(
     role: u8,
     username: &[u8],
 ) -> Result<Vec<u8>> {
-    let mut data = Vec::with_capacity(rm.len() + rc.len() + 2 + username.len());
-    data.extend_from_slice(rm);
+    // Per IPMI v2.0 spec Table 13-31, the SIK input is:
+    //   Rc || Rm || RoleM || ULengthM || <UNameM>
+    // Console random (Rc) comes first, BMC random (Rm) second.
+    let mut data = Vec::with_capacity(rc.len() + rm.len() + 2 + username.len());
     data.extend_from_slice(rc);
+    data.extend_from_slice(rm);
     data.push(role);
     data.push(username.len() as u8);
     data.extend_from_slice(username);
