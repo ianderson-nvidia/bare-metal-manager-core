@@ -66,6 +66,7 @@ where
     Fut: Future,
     Fut::Output: TestTermination,
 {
+    color_backtrace::install();
     let test_path = args.test_path;
     run_test(args, |pool_opts, connect_opts| async move {
         let pool = pool_opts
@@ -93,6 +94,7 @@ where
     Fut: Future,
     Fut::Output: TestTermination,
 {
+    color_backtrace::install();
     sqlx_core::rt::test_block_on(async move {
         let test_context = test_context(&args)
             .await

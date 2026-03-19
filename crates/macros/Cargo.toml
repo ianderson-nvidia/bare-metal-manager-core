@@ -26,6 +26,7 @@ name = "carbide_macros"
 proc-macro = true
 
 [dependencies]
+#color-backtrace = { workspace = true }
 sqlx = { workspace = true, features = [
   "runtime-tokio-rustls",
   "mac_address",

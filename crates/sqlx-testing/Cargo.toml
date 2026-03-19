@@ -25,6 +25,7 @@ authors.workspace = true
 name = "sqlx_testing"
 
 [dependencies]
+color-backtrace = {workspace = true}
 sqlx = { workspace = true }
 sqlx-core = { workspace = true }
 tokio = { workspace = true }
