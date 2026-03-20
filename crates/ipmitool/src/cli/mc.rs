@@ -61,10 +61,7 @@ pub enum WatchdogAction {
 ///
 /// Returns an error if the IPMI transport fails or the BMC returns an error
 /// completion code.
-pub async fn run(
-    transport: &mut impl IpmiTransport,
-    cmd: McCommand,
-) -> eyre::Result<()> {
+pub async fn run(transport: &mut impl IpmiTransport, cmd: McCommand) -> eyre::Result<()> {
     match cmd {
         McCommand::Info => {
             // Get Device ID: NetFn=App (0x06), Cmd=0x01.
@@ -92,18 +89,16 @@ pub async fn run(
             let manufacturer_id = u32::from(resp.data[6])
                 | (u32::from(resp.data[7]) << 8)
                 | (u32::from(resp.data[8]) << 16);
-            let product_id =
-                u16::from(resp.data[9]) | (u16::from(resp.data[10]) << 8);
+            let product_id = u16::from(resp.data[9]) | (u16::from(resp.data[10]) << 8);
 
             println!("Device ID                 : {device_id}");
             println!("Device Revision           : {device_revision}");
-            println!("Provides Device SDRs      : {}", if provides_sdrs { "yes" } else { "no" });
             println!(
-                "Firmware Revision         : {fw_major}.{fw_minor:02}"
+                "Provides Device SDRs      : {}",
+                if provides_sdrs { "yes" } else { "no" }
             );
-            println!(
-                "IPMI Version              : {ipmi_version_major}.{ipmi_version_minor}"
-            );
+            println!("Firmware Revision         : {fw_major}.{fw_minor:02}");
+            println!("IPMI Version              : {ipmi_version_major}.{ipmi_version_minor}");
             println!("Manufacturer ID           : {manufacturer_id}");
             println!("Product ID                : {product_id} (0x{product_id:04X})");
 
@@ -153,11 +148,22 @@ pub async fn run(
             let d = &resp.data;
             println!(
                 "System GUID  : {:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-                d[3], d[2], d[1], d[0],
-                d[5], d[4],
-                d[7], d[6],
-                d[8], d[9],
-                d[10], d[11], d[12], d[13], d[14], d[15]
+                d[3],
+                d[2],
+                d[1],
+                d[0],
+                d[5],
+                d[4],
+                d[7],
+                d[6],
+                d[8],
+                d[9],
+                d[10],
+                d[11],
+                d[12],
+                d[13],
+                d[14],
+                d[15]
             );
             Ok(())
         }
@@ -170,8 +176,7 @@ pub async fn run(
                         .send_recv(&req)
                         .await
                         .context("send Get Watchdog Timer")?;
-                    resp.check_completion()
-                        .context("Get Watchdog Timer")?;
+                    resp.check_completion().context("Get Watchdog Timer")?;
 
                     if resp.data.len() < 6 {
                         eyre::bail!(
@@ -199,11 +204,17 @@ pub async fn run(
                         _ => "reserved",
                     };
 
-                    let countdown_ms = u16::from(resp.data[4])
-                        | (u16::from(resp.data[5]) << 8);
+                    let countdown_ms = u16::from(resp.data[4]) | (u16::from(resp.data[5]) << 8);
 
                     println!("Watchdog Timer Use   : {timer_use_str}");
-                    println!("Watchdog Timer Is    : {}", if running { "Started/Running" } else { "Stopped" });
+                    println!(
+                        "Watchdog Timer Is    : {}",
+                        if running {
+                            "Started/Running"
+                        } else {
+                            "Stopped"
+                        }
+                    );
                     println!("Timeout Action       : {timeout_action_str}");
                     println!(
                         "Countdown            : {:.1}s",
@@ -218,8 +229,7 @@ pub async fn run(
                         .send_recv(&req)
                         .await
                         .context("send Reset Watchdog Timer")?;
-                    resp.check_completion()
-                        .context("Reset Watchdog Timer")?;
+                    resp.check_completion().context("Reset Watchdog Timer")?;
                     println!("Watchdog Timer Reset");
                     Ok(())
                 }
@@ -239,8 +249,7 @@ pub async fn run(
                         .send_recv(&req)
                         .await
                         .context("send Set Watchdog Timer")?;
-                    resp.check_completion()
-                        .context("Set Watchdog Timer")?;
+                    resp.check_completion().context("Set Watchdog Timer")?;
                     println!("Watchdog Timer Off");
                     Ok(())
                 }
@@ -253,8 +262,7 @@ pub async fn run(
                 .send_recv(&req)
                 .await
                 .context("send Get Self Test Results")?;
-            resp.check_completion()
-                .context("Get Self Test Results")?;
+            resp.check_completion().context("Get Self Test Results")?;
 
             if resp.data.len() < 2 {
                 eyre::bail!(
@@ -278,9 +286,7 @@ pub async fn run(
                     println!("  Failure detail: 0x{result2:02X}");
                 }
                 other => {
-                    println!(
-                        "Self Test: device-specific result 0x{other:02X} 0x{result2:02X}"
-                    );
+                    println!("Self Test: device-specific result 0x{other:02X} 0x{result2:02X}");
                 }
             }
 

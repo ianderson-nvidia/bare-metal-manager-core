@@ -21,7 +21,7 @@ use eyre::Context;
 
 use crate::cmd::sel;
 use crate::transport::IpmiTransport;
-use crate::types::{format_sel_timestamp, SensorType};
+use crate::types::{SensorType, format_sel_timestamp};
 
 /// SEL subcommands.
 #[derive(clap::Subcommand)]
@@ -42,10 +42,7 @@ pub enum SelCommand {
 ///
 /// Returns an error if the IPMI transport fails or a command returns
 /// an error completion code.
-pub async fn run(
-    transport: &mut impl IpmiTransport,
-    cmd: SelCommand,
-) -> eyre::Result<()> {
+pub async fn run(transport: &mut impl IpmiTransport, cmd: SelCommand) -> eyre::Result<()> {
     match cmd {
         SelCommand::List => {
             let entries = sel::get_all_sel_entries(transport)
@@ -82,9 +79,7 @@ pub async fn run(
             Ok(())
         }
         SelCommand::Info => {
-            let info = sel::get_sel_info(transport)
-                .await
-                .context("get SEL info")?;
+            let info = sel::get_sel_info(transport).await.context("get SEL info")?;
 
             println!("SEL Entries          : {}", info.entries);
             println!("SEL Free Space       : {} bytes", info.free_space);
@@ -92,17 +87,13 @@ pub async fn run(
             Ok(())
         }
         SelCommand::Clear => {
-            sel::clear_sel(transport)
-                .await
-                .context("clear SEL")?;
+            sel::clear_sel(transport).await.context("clear SEL")?;
 
             println!("Clearing SEL... done");
             Ok(())
         }
         SelCommand::Time => {
-            let timestamp = sel::get_sel_time(transport)
-                .await
-                .context("get SEL time")?;
+            let timestamp = sel::get_sel_time(transport).await.context("get SEL time")?;
 
             println!("SEL Time: {}", format_sel_timestamp(timestamp));
             Ok(())

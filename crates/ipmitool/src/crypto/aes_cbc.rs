@@ -34,8 +34,8 @@
 //! So the last byte of the padded block is always the pad length, and the
 //! preceding pad bytes count up from 1.
 
-use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use aes::Aes128;
+use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use cbc::{Decryptor, Encryptor};
 use rand::Rng;
 

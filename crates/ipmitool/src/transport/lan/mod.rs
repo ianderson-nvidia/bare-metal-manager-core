@@ -39,14 +39,14 @@ use byteorder::{ByteOrder, LittleEndian};
 use tokio::net::UdpSocket;
 use tracing::{debug, instrument, trace, warn};
 
-use self::auth::{compute_md5_auth_code, AuthType};
+use self::auth::{AuthType, compute_md5_auth_code};
 use self::packet::{build_v15_packet, parse_v15_packet};
 use self::session::{LanActiveSession, LanSessionState};
-use crate::error::{IpmitoolError, Result};
-use crate::transport::lanplus::header::IpmiMsgHeader;
-use crate::transport::IpmiTransport;
-use crate::types::{IpmiRequest, IpmiResponse, NetFn, PrivilegeLevel};
 use crate::ConnectionConfig;
+use crate::error::{IpmitoolError, Result};
+use crate::transport::IpmiTransport;
+use crate::transport::lanplus::header::IpmiMsgHeader;
+use crate::types::{IpmiRequest, IpmiResponse, NetFn, PrivilegeLevel};
 
 /// Maximum size of a single RMCP UDP packet.
 const MAX_PACKET_SIZE: usize = 1024;
@@ -119,12 +119,9 @@ impl LanTransport {
         //
         // This tells us which auth types the BMC supports on the current
         // channel. We send it unauthenticated (auth_type=None, session_id=0).
-        let auth_type = self
-            .get_channel_auth_capabilities()
-            .await
-            .map_err(|e| IpmitoolError::Transport(format!(
-                "Get Channel Auth Capabilities failed: {e}"
-            )))?;
+        let auth_type = self.get_channel_auth_capabilities().await.map_err(|e| {
+            IpmitoolError::Transport(format!("Get Channel Auth Capabilities failed: {e}"))
+        })?;
         debug!(?auth_type, "negotiated auth type");
 
         // Step 2: Get Session Challenge.
@@ -134,9 +131,7 @@ impl LanTransport {
         let (temp_session_id, challenge) = self
             .get_session_challenge(auth_type)
             .await
-            .map_err(|e| IpmitoolError::Transport(format!(
-                "Get Session Challenge failed: {e}"
-            )))?;
+            .map_err(|e| IpmitoolError::Transport(format!("Get Session Challenge failed: {e}")))?;
         debug!(temp_session_id, "session challenge received");
 
         self.session = LanSessionState::ChallengeReceived {
@@ -152,21 +147,18 @@ impl LanTransport {
         let (session_id, initial_seq) = self
             .activate_session(auth_type, temp_session_id, &challenge)
             .await
-            .map_err(|e| IpmitoolError::Transport(format!(
-                "Activate Session failed: {e}"
-            )))?;
+            .map_err(|e| IpmitoolError::Transport(format!("Activate Session failed: {e}")))?;
         debug!(session_id, initial_seq, "session activated");
 
-        self.session = LanSessionState::Active(LanActiveSession::new(
-            session_id, auth_type, initial_seq,
-        ));
+        self.session =
+            LanSessionState::Active(LanActiveSession::new(session_id, auth_type, initial_seq));
 
         // Step 4: Set Session Privilege Level to Administrator.
         self.set_session_privilege(PrivilegeLevel::Administrator)
             .await
-            .map_err(|e| IpmitoolError::Transport(format!(
-                "Set Session Privilege Level failed: {e}"
-            )))?;
+            .map_err(|e| {
+                IpmitoolError::Transport(format!("Set Session Privilege Level failed: {e}"))
+            })?;
         debug!("privilege level set to Administrator");
 
         Ok(())
@@ -202,7 +194,10 @@ impl LanTransport {
         }
 
         let auth_support = resp.data[1];
-        trace!(auth_support = format!("0x{auth_support:02X}"), "auth type support bitmask");
+        trace!(
+            auth_support = format!("0x{auth_support:02X}"),
+            "auth type support bitmask"
+        );
 
         // Pick the best available auth type: MD5 > None.
         if auth_support & (1 << 2) != 0 {
@@ -220,10 +215,7 @@ impl LanTransport {
     ///
     /// Sends our username (null-padded to 16 bytes) and receives a temporary
     /// session ID and 16-byte challenge string.
-    async fn get_session_challenge(
-        &mut self,
-        auth_type: AuthType,
-    ) -> Result<(u32, [u8; 16])> {
+    async fn get_session_challenge(&mut self, auth_type: AuthType) -> Result<(u32, [u8; 16])> {
         // NetFn=App (0x06), Cmd=0x39 (Get Session Challenge)
         // Data: [auth_type, username (16 bytes, null-padded)]
         let mut req_data = Vec::with_capacity(17);
@@ -236,8 +228,7 @@ impl LanTransport {
         req_data.extend_from_slice(&username_padded);
 
         let rq_seq = self.next_rq_seq();
-        let ipmi_msg =
-            IpmiMsgHeader::request(0x06, 0x39, rq_seq).build_message(&req_data);
+        let ipmi_msg = IpmiMsgHeader::request(0x06, 0x39, rq_seq).build_message(&req_data);
 
         let packet = build_v15_packet(AuthType::None, 0, 0, None, &ipmi_msg);
         let resp_bytes = self.send_recv_raw(&packet).await?;
@@ -288,8 +279,7 @@ impl LanTransport {
         req_data.extend_from_slice(&[0u8; 4]);
 
         let rq_seq = self.next_rq_seq();
-        let ipmi_msg =
-            IpmiMsgHeader::request(0x06, 0x3A, rq_seq).build_message(&req_data);
+        let ipmi_msg = IpmiMsgHeader::request(0x06, 0x3A, rq_seq).build_message(&req_data);
 
         // The Activate Session request is pre-session: session_seq=0 in the
         // header. The auth code is computed with session_seq=0 as well, since
@@ -340,16 +330,9 @@ impl LanTransport {
     }
 
     /// Step 4: Set Session Privilege Level.
-    async fn set_session_privilege(
-        &mut self,
-        privilege: PrivilegeLevel,
-    ) -> Result<()> {
+    async fn set_session_privilege(&mut self, privilege: PrivilegeLevel) -> Result<()> {
         // NetFn=App (0x06), Cmd=0x3B (Set Session Privilege Level)
-        let req = IpmiRequest::with_data(
-            NetFn::App,
-            0x3B,
-            vec![privilege as u8],
-        );
+        let req = IpmiRequest::with_data(NetFn::App, 0x3B, vec![privilege as u8]);
         let resp = self.send_recv(&req).await?;
         resp.check_completion()?;
         Ok(())
@@ -365,7 +348,11 @@ impl LanTransport {
         let max_retries = self.config.retries;
         let mut timeout = INITIAL_TIMEOUT;
 
-        trace!(len = packet.len(), hex = hex::encode(packet), "sending v1.5 packet");
+        trace!(
+            len = packet.len(),
+            hex = hex::encode(packet),
+            "sending v1.5 packet"
+        );
 
         for attempt in 0..=max_retries {
             self.socket.send(packet).await?;
@@ -382,8 +369,7 @@ impl LanTransport {
                     if attempt < max_retries {
                         warn!(
                             attempt = attempt + 1,
-                            max_retries,
-                            "timeout, retrying with increased timeout"
+                            max_retries, "timeout, retrying with increased timeout"
                         );
                         // Escalate timeout by 1 second per retry.
                         timeout += Duration::from_secs(1);
@@ -424,8 +410,7 @@ impl IpmiTransport for LanTransport {
         let netfn: u8 = req.netfn.into();
 
         // Build the inner IPMI message (header + data + checksums).
-        let ipmi_msg =
-            IpmiMsgHeader::request(netfn, req.cmd, rq_seq).build_message(&req.data);
+        let ipmi_msg = IpmiMsgHeader::request(netfn, req.cmd, rq_seq).build_message(&req.data);
 
         // Compute auth code for MD5, or None for unauthenticated.
         let auth_code = match auth_type {
@@ -438,20 +423,13 @@ impl IpmiTransport for LanTransport {
             AuthType::None => None,
         };
 
-        let packet = build_v15_packet(
-            auth_type,
-            seq,
-            session_id,
-            auth_code.as_ref(),
-            &ipmi_msg,
-        );
+        let packet = build_v15_packet(auth_type, seq, session_id, auth_code.as_ref(), &ipmi_msg);
 
         let resp_bytes = self.send_recv_raw(&packet).await?;
         let parsed = parse_v15_packet(&resp_bytes)?;
 
         // Parse the inner IPMI message from the response payload.
-        let (_resp_header, response_data) =
-            IpmiMsgHeader::parse_message(parsed.payload)?;
+        let (_resp_header, response_data) = IpmiMsgHeader::parse_message(parsed.payload)?;
 
         IpmiResponse::from_bytes(response_data)
     }
@@ -466,8 +444,7 @@ impl IpmiTransport for LanTransport {
             let mut close_data = [0u8; 4];
             LittleEndian::write_u32(&mut close_data, session_id);
 
-            let close_req =
-                IpmiRequest::with_data(NetFn::App, 0x3C, close_data.to_vec());
+            let close_req = IpmiRequest::with_data(NetFn::App, 0x3C, close_data.to_vec());
 
             match self.send_recv(&close_req).await {
                 Ok(_) => debug!("session closed successfully"),

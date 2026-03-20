@@ -141,9 +141,7 @@ pub struct ChassisStatus {
 ///
 /// Returns an error if the transport fails or the BMC returns a non-success
 /// completion code, or if the response is too short.
-pub async fn get_chassis_status(
-    transport: &mut impl IpmiTransport,
-) -> Result<ChassisStatus> {
+pub async fn get_chassis_status(transport: &mut impl IpmiTransport) -> Result<ChassisStatus> {
     let req = IpmiRequest::new(NetFn::Chassis, 0x01);
     let resp = transport.send_recv(&req).await?;
     resp.check_completion()?;
@@ -172,10 +170,7 @@ pub async fn get_chassis_status(
 ///
 /// Returns an error if the transport fails or the BMC returns a non-success
 /// completion code.
-pub async fn chassis_control(
-    transport: &mut impl IpmiTransport,
-    cmd: PowerCommand,
-) -> Result<()> {
+pub async fn chassis_control(transport: &mut impl IpmiTransport, cmd: PowerCommand) -> Result<()> {
     let req = IpmiRequest::with_data(NetFn::Chassis, 0x02, vec![cmd.as_byte()]);
     let resp = transport.send_recv(&req).await?;
     resp.check_completion()
@@ -227,7 +222,7 @@ pub async fn set_boot_device(
     let byte2 = device.to_flags_byte();
 
     let data = vec![
-        0x05, // parameter selector = boot flags
+        0x05,  // parameter selector = boot flags
         byte1, // boot flag valid + persistence
         byte2, // boot device
         0x00,  // BIOS verbosity / console redirection (default)
@@ -249,9 +244,7 @@ pub async fn set_boot_device(
 ///
 /// Returns an error if the transport fails, the BMC returns a non-success
 /// completion code, or the response is too short to contain boot flags.
-pub async fn get_boot_device(
-    transport: &mut impl IpmiTransport,
-) -> Result<BootDevice> {
+pub async fn get_boot_device(transport: &mut impl IpmiTransport) -> Result<BootDevice> {
     // Request parameter 5 (boot flags), set selector 0, block selector 0.
     let data = vec![0x05, 0x00, 0x00];
     let req = IpmiRequest::with_data(NetFn::Chassis, 0x09, data);

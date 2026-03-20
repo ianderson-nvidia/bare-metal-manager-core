@@ -84,10 +84,7 @@ pub enum SolCommand {
 ///
 /// Returns an error if the IPMI transport fails or the BMC returns an error
 /// completion code.
-pub async fn run(
-    transport: &mut impl IpmiTransport,
-    cmd: SolCommand,
-) -> eyre::Result<()> {
+pub async fn run(transport: &mut impl IpmiTransport, cmd: SolCommand) -> eyre::Result<()> {
     match cmd {
         SolCommand::Info { channel } => {
             let config = sol::get_sol_config(transport, channel)
@@ -109,10 +106,7 @@ pub async fn run(
             println!("  Char Send Threshold: {}", config.char_send_threshold);
             println!("  Retry Count        : {}", config.retry_count);
             println!("  Retry Interval     : {} ms", config.retry_interval_ms);
-            println!(
-                "  Non-volatile Rate  : {}",
-                config.non_volatile_bit_rate
-            );
+            println!("  Non-volatile Rate  : {}", config.non_volatile_bit_rate);
             println!("  Volatile Rate      : {}", config.volatile_bit_rate);
             Ok(())
         }
@@ -164,11 +158,7 @@ pub async fn run(
             volatile,
         } => {
             let bit_rate = parse_baud_rate(&rate)?;
-            let label = if volatile {
-                "volatile"
-            } else {
-                "non-volatile"
-            };
+            let label = if volatile { "volatile" } else { "non-volatile" };
 
             sol::set_sol_bit_rate(transport, channel, volatile, bit_rate)
                 .await

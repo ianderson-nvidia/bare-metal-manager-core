@@ -130,9 +130,7 @@ async fn reserve_sdr_repository(transport: &mut impl IpmiTransport) -> Result<u1
 ///
 /// Returns an error if any transport operation fails or a record cannot
 /// be parsed.
-pub async fn get_all_sdr_records(
-    transport: &mut impl IpmiTransport,
-) -> Result<Vec<SdrRecord>> {
+pub async fn get_all_sdr_records(transport: &mut impl IpmiTransport) -> Result<Vec<SdrRecord>> {
     let reservation_id = reserve_sdr_repository(transport).await?;
 
     let mut records = Vec::new();
@@ -280,7 +278,8 @@ fn parse_full_sensor_record(record_id: u16, data: &[u8]) -> Result<Option<SdrRec
     let sensor_type = SensorType::from(data[12]);
     let base_unit = SensorUnit::from(data[21]);
     let linearization_byte = data[23] & 0x7F;
-    let linearization = Linearization::try_from(linearization_byte).unwrap_or(Linearization::Linear);
+    let linearization =
+        Linearization::try_from(linearization_byte).unwrap_or(Linearization::Linear);
 
     // Extract M (10-bit signed) from bytes 24-25.
     let m_ls = data[24] as u16;

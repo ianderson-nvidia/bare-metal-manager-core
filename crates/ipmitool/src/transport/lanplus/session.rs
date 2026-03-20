@@ -42,9 +42,7 @@ pub enum SessionState {
     Inactive,
 
     /// Open Session Request sent; waiting for Open Session Response.
-    OpenSessionSent {
-        console_session_id: u32,
-    },
+    OpenSessionSent { console_session_id: u32 },
 
     /// RAKP Message 1 sent; waiting for RAKP Message 2.
     Rakp1Sent {
@@ -67,9 +65,7 @@ pub enum SessionState {
     },
 
     /// Session fully established and ready for IPMI commands.
-    Active {
-        session: ActiveSession,
-    },
+    Active { session: ActiveSession },
 
     /// Session has been closed.
     Closed,

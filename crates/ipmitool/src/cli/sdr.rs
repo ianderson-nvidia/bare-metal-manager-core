@@ -35,10 +35,7 @@ pub enum SdrCommand {
 ///
 /// Returns an error if the IPMI transport fails or a command returns
 /// an error completion code.
-pub async fn run(
-    transport: &mut impl IpmiTransport,
-    cmd: SdrCommand,
-) -> eyre::Result<()> {
+pub async fn run(transport: &mut impl IpmiTransport, cmd: SdrCommand) -> eyre::Result<()> {
     match cmd {
         SdrCommand::List => {
             let records = sdr::get_all_sdr_records(transport)

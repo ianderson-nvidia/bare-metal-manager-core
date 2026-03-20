@@ -200,10 +200,7 @@ pub async fn activate_sol(
 ///
 /// Returns an error if the transport fails or the BMC returns a non-success
 /// completion code.
-pub async fn deactivate_sol(
-    transport: &mut impl IpmiTransport,
-    instance: u8,
-) -> Result<()> {
+pub async fn deactivate_sol(transport: &mut impl IpmiTransport, instance: u8) -> Result<()> {
     let data = vec![
         0x01,     // payload type = SOL
         instance, // payload instance
@@ -226,10 +223,7 @@ pub async fn deactivate_sol(
 ///
 /// Returns an error if any transport call fails, the BMC returns a non-success
 /// completion code, or any response is too short.
-pub async fn get_sol_config(
-    transport: &mut impl IpmiTransport,
-    channel: u8,
-) -> Result<SolConfig> {
+pub async fn get_sol_config(transport: &mut impl IpmiTransport, channel: u8) -> Result<SolConfig> {
     // Helper to issue a single Get SOL Config Parameter request.
     // Request: [channel (bit 7 = don't get revision only), param_selector,
     //           set_selector, block_selector]

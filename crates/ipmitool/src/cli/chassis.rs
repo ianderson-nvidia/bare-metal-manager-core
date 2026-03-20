@@ -74,10 +74,7 @@ pub enum PowerAction {
 ///
 /// Returns an error if the IPMI transport fails or the BMC returns an error
 /// completion code.
-pub async fn run(
-    transport: &mut impl IpmiTransport,
-    cmd: ChassisCommand,
-) -> eyre::Result<()> {
+pub async fn run(transport: &mut impl IpmiTransport, cmd: ChassisCommand) -> eyre::Result<()> {
     match cmd {
         ChassisCommand::Status => {
             // Get Chassis Status: NetFn=Chassis (0x00), Cmd=0x01.
@@ -138,10 +135,7 @@ pub async fn run(
                         eyre::bail!("empty chassis status response");
                     }
                     let power_on = resp.data[0] & 0x01 != 0;
-                    println!(
-                        "Chassis Power is {}",
-                        if power_on { "on" } else { "off" }
-                    );
+                    println!("Chassis Power is {}", if power_on { "on" } else { "off" });
                     return Ok(());
                 }
                 PowerAction::Off => (0x00, "Down/Off"),
@@ -151,11 +145,7 @@ pub async fn run(
                 PowerAction::Soft => (0x05, "Soft"),
             };
 
-            let req = IpmiRequest::with_data(
-                NetFn::Chassis,
-                0x02,
-                vec![control_byte],
-            );
+            let req = IpmiRequest::with_data(NetFn::Chassis, 0x02, vec![control_byte]);
             let resp = transport
                 .send_recv(&req)
                 .await
@@ -207,11 +197,11 @@ pub async fn run(
             // Bytes 3-4: reserved zeros
             let persist_bit = if persistent { 0x40 } else { 0x00 };
             let data = vec![
-                0x05,                    // parameter selector = boot flags
-                0x80 | persist_bit,      // set valid + optional persistent
-                device_code,             // boot device
-                0x00,                    // reserved
-                0x00,                    // reserved
+                0x05,               // parameter selector = boot flags
+                0x80 | persist_bit, // set valid + optional persistent
+                device_code,        // boot device
+                0x00,               // reserved
+                0x00,               // reserved
             ];
 
             let req = IpmiRequest::with_data(NetFn::Chassis, 0x08, data);
@@ -219,8 +209,7 @@ pub async fn run(
                 .send_recv(&req)
                 .await
                 .context("send Set System Boot Options")?;
-            resp.check_completion()
-                .context("Set System Boot Options")?;
+            resp.check_completion().context("Set System Boot Options")?;
             println!("Set boot device to {device}");
             if persistent {
                 println!("Boot device setting is persistent");

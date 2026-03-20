@@ -17,12 +17,12 @@
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
+use ipmitool::ConnectionConfig;
 use ipmitool::cli::{Cli, CliCommand};
+use ipmitool::transport::http::{HttpTransport, HttpTransportConfig};
 use ipmitool::transport::lan::LanTransport;
 use ipmitool::transport::lanplus::LanplusTransport;
-use ipmitool::transport::http::{HttpTransport, HttpTransportConfig};
 use ipmitool::transport::{IpmiTransport, Transport};
-use ipmitool::ConnectionConfig;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -37,9 +37,7 @@ async fn main() -> eyre::Result<()> {
         2 => tracing::Level::DEBUG,
         _ => tracing::Level::TRACE,
     };
-    tracing_subscriber::fmt()
-        .with_max_level(level)
-        .init();
+    tracing_subscriber::fmt().with_max_level(level).init();
 
     let password = resolve_password(&cli).context("resolve IPMI password")?;
 
@@ -71,8 +69,7 @@ async fn main() -> eyre::Result<()> {
                 bmc_host: format!("{}:{}", config.host, config.port),
                 proxy_url: String::new(),
             };
-            let t = HttpTransport::connect(http_config)
-                .context("connect to BMC via HTTPS")?;
+            let t = HttpTransport::connect(http_config).context("connect to BMC via HTTPS")?;
             Transport::Http(t)
         }
         other => eyre::bail!("unsupported interface: {other} (supported: lan, lanplus, http)"),
@@ -82,24 +79,12 @@ async fn main() -> eyre::Result<()> {
         CliCommand::Chassis { command } => {
             ipmitool::cli::chassis::run(&mut transport, command).await
         }
-        CliCommand::Raw(raw_cmd) => {
-            ipmitool::cli::raw::run(&mut transport, raw_cmd).await
-        }
-        CliCommand::Mc { command } => {
-            ipmitool::cli::mc::run(&mut transport, command).await
-        }
-        CliCommand::Sdr { command } => {
-            ipmitool::cli::sdr::run(&mut transport, command).await
-        }
-        CliCommand::Sel { command } => {
-            ipmitool::cli::sel::run(&mut transport, command).await
-        }
-        CliCommand::Fru { command } => {
-            ipmitool::cli::fru::run(&mut transport, command).await
-        }
-        CliCommand::Sensor { command } => {
-            ipmitool::cli::sensor::run(&mut transport, command).await
-        }
+        CliCommand::Raw(raw_cmd) => ipmitool::cli::raw::run(&mut transport, raw_cmd).await,
+        CliCommand::Mc { command } => ipmitool::cli::mc::run(&mut transport, command).await,
+        CliCommand::Sdr { command } => ipmitool::cli::sdr::run(&mut transport, command).await,
+        CliCommand::Sel { command } => ipmitool::cli::sel::run(&mut transport, command).await,
+        CliCommand::Fru { command } => ipmitool::cli::fru::run(&mut transport, command).await,
+        CliCommand::Sensor { command } => ipmitool::cli::sensor::run(&mut transport, command).await,
         CliCommand::Sol { command } => match command {
             ipmitool::cli::sol::SolCommand::Activate { instance } => {
                 // SOL interactive sessions require RMCP+ (lanplus) for the
@@ -118,9 +103,7 @@ async fn main() -> eyre::Result<()> {
             }
             other => ipmitool::cli::sol::run(&mut transport, other).await,
         },
-        CliCommand::User { command } => {
-            ipmitool::cli::user::run(&mut transport, command).await
-        }
+        CliCommand::User { command } => ipmitool::cli::user::run(&mut transport, command).await,
         CliCommand::Channel { command } => {
             ipmitool::cli::channel::run(&mut transport, command).await
         }
@@ -137,8 +120,7 @@ fn resolve_password(cli: &Cli) -> eyre::Result<String> {
     if let Some(ref pw) = cli.password {
         Ok(pw.clone())
     } else if cli.env_password {
-        std::env::var("IPMITOOL_PASSWORD")
-            .context("IPMITOOL_PASSWORD not set")
+        std::env::var("IPMITOOL_PASSWORD").context("IPMITOOL_PASSWORD not set")
     } else {
         // clap's `env = "IPMITOOL_PASSWORD"` on the password field will have
         // already populated it if the env var is set, so reaching here means

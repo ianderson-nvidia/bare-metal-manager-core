@@ -39,18 +39,14 @@ pub enum FruCommand {
 ///
 /// Returns an error if the IPMI transport fails or a command returns
 /// an error completion code.
-pub async fn run(
-    transport: &mut impl IpmiTransport,
-    cmd: FruCommand,
-) -> eyre::Result<()> {
+pub async fn run(transport: &mut impl IpmiTransport, cmd: FruCommand) -> eyre::Result<()> {
     match cmd {
         FruCommand::Print { fru_id } => {
             let raw_data = fru::read_fru_data(transport, fru_id)
                 .await
                 .context("read FRU data")?;
 
-            let parsed = fru::parse_fru_data(&raw_data)
-                .context("parse FRU data")?;
+            let parsed = fru::parse_fru_data(&raw_data).context("parse FRU data")?;
 
             println!("FRU Device Description : FRU {fru_id}");
             println!();

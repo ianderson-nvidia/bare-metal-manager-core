@@ -234,11 +234,7 @@ impl SessionHeader {
 
     /// Create an authenticated session header with encryption and integrity.
     #[must_use]
-    pub fn authenticated(
-        payload_type: PayloadType,
-        session_id: u32,
-        session_seq: u32,
-    ) -> Self {
+    pub fn authenticated(payload_type: PayloadType, session_id: u32, session_seq: u32) -> Self {
         Self {
             auth_type: AUTH_TYPE_RMCPPLUS,
             // Set bit 7 (encrypted) and bit 6 (authenticated).
@@ -481,10 +477,7 @@ mod tests {
         assert_eq!(header.session_seq, 0);
         assert!(!header.is_encrypted());
         assert!(!header.is_authenticated());
-        assert_eq!(
-            header.payload_type(),
-            Ok(PayloadType::OpenSessionRequest)
-        );
+        assert_eq!(header.payload_type(), Ok(PayloadType::OpenSessionRequest));
     }
 
     #[test]
@@ -510,8 +503,7 @@ mod tests {
         assert_eq!(msg[0], BMC_SLAVE_ADDR); // rs_addr
         assert_eq!(msg[5], 0x01); // cmd
 
-        let (parsed_hdr, parsed_data) =
-            IpmiMsgHeader::parse_message(&msg).expect("valid message");
+        let (parsed_hdr, parsed_data) = IpmiMsgHeader::parse_message(&msg).expect("valid message");
         assert_eq!(parsed_hdr.netfn(), 0x06);
         assert_eq!(parsed_hdr.cmd, 0x01);
         assert_eq!(parsed_data, &[0xAA, 0xBB]);
@@ -522,8 +514,7 @@ mod tests {
         let header = IpmiMsgHeader::request(0x00, 0x01, 0); // Chassis, Get Status
         let msg = header.build_message(&[]);
 
-        let (parsed_hdr, parsed_data) =
-            IpmiMsgHeader::parse_message(&msg).expect("valid message");
+        let (parsed_hdr, parsed_data) = IpmiMsgHeader::parse_message(&msg).expect("valid message");
         assert_eq!(parsed_hdr.netfn(), 0x00);
         assert_eq!(parsed_hdr.cmd, 0x01);
         assert!(parsed_data.is_empty());

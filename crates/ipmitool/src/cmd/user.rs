@@ -73,10 +73,7 @@ pub struct UserSummary {
 ///
 /// Returns an error if the transport fails, the BMC returns a non-success
 /// completion code, or the response is too short.
-pub async fn get_user_name(
-    transport: &mut impl IpmiTransport,
-    user_id: u8,
-) -> Result<String> {
+pub async fn get_user_name(transport: &mut impl IpmiTransport, user_id: u8) -> Result<String> {
     let req = IpmiRequest::with_data(NetFn::App, 0x46, vec![user_id]);
     let resp = transport.send_recv(&req).await?;
     resp.check_completion()?;
@@ -91,10 +88,7 @@ pub async fn get_user_name(
     // The name is a 16-byte field, null-padded. Find the first null byte
     // (or take the whole 16 bytes if there are no nulls).
     let name_bytes = &resp.data[..16];
-    let end = name_bytes
-        .iter()
-        .position(|&b| b == 0x00)
-        .unwrap_or(16);
+    let end = name_bytes.iter().position(|&b| b == 0x00).unwrap_or(16);
 
     let name = String::from_utf8_lossy(&name_bytes[..end]).into_owned();
     Ok(name)
@@ -148,11 +142,7 @@ pub async fn set_user_password(
     let password_len = if is_20_byte { 20 } else { 16 };
 
     // Byte 0: user ID, with bit 7 indicating 20-byte password format.
-    let id_byte = if is_20_byte {
-        user_id | 0x80
-    } else {
-        user_id
-    };
+    let id_byte = if is_20_byte { user_id | 0x80 } else { user_id };
 
     // Byte 1: operation = 0x02 (set password).
     let mut data = vec![id_byte, 0x02];
@@ -177,10 +167,7 @@ pub async fn set_user_password(
 ///
 /// Returns an error if the transport fails or the BMC returns a non-success
 /// completion code.
-pub async fn enable_user(
-    transport: &mut impl IpmiTransport,
-    user_id: u8,
-) -> Result<()> {
+pub async fn enable_user(transport: &mut impl IpmiTransport, user_id: u8) -> Result<()> {
     // Operation 0x01 = enable user. No password data needed.
     let data = vec![user_id, 0x01];
     let req = IpmiRequest::with_data(NetFn::App, 0x47, data);
@@ -197,10 +184,7 @@ pub async fn enable_user(
 ///
 /// Returns an error if the transport fails or the BMC returns a non-success
 /// completion code.
-pub async fn disable_user(
-    transport: &mut impl IpmiTransport,
-    user_id: u8,
-) -> Result<()> {
+pub async fn disable_user(transport: &mut impl IpmiTransport, user_id: u8) -> Result<()> {
     // Operation 0x00 = disable user. No password data needed.
     let data = vec![user_id, 0x00];
     let req = IpmiRequest::with_data(NetFn::App, 0x47, data);

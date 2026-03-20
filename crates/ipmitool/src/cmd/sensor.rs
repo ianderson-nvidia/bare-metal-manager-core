@@ -132,12 +132,36 @@ pub async fn get_sensor_thresholds(
     //   bit 4: upper critical
     //   bit 5: upper non-recoverable
     Ok(SensorThresholds {
-        lower_non_critical: if mask & 0x01 != 0 { Some(resp.data[1]) } else { None },
-        lower_critical: if mask & 0x02 != 0 { Some(resp.data[2]) } else { None },
-        lower_non_recoverable: if mask & 0x04 != 0 { Some(resp.data[3]) } else { None },
-        upper_non_critical: if mask & 0x08 != 0 { Some(resp.data[4]) } else { None },
-        upper_critical: if mask & 0x10 != 0 { Some(resp.data[5]) } else { None },
-        upper_non_recoverable: if mask & 0x20 != 0 { Some(resp.data[6]) } else { None },
+        lower_non_critical: if mask & 0x01 != 0 {
+            Some(resp.data[1])
+        } else {
+            None
+        },
+        lower_critical: if mask & 0x02 != 0 {
+            Some(resp.data[2])
+        } else {
+            None
+        },
+        lower_non_recoverable: if mask & 0x04 != 0 {
+            Some(resp.data[3])
+        } else {
+            None
+        },
+        upper_non_critical: if mask & 0x08 != 0 {
+            Some(resp.data[4])
+        } else {
+            None
+        },
+        upper_critical: if mask & 0x10 != 0 {
+            Some(resp.data[5])
+        } else {
+            None
+        },
+        upper_non_recoverable: if mask & 0x20 != 0 {
+            Some(resp.data[6])
+        } else {
+            None
+        },
     })
 }
 
@@ -241,11 +265,7 @@ mod tests {
         let mut transport = MockTransport::new();
 
         // Response: cc + mask(0x3F = all readable) + lnc + lc + lnr + unc + uc + unr
-        transport.add_response(
-            0x04,
-            0x27,
-            vec![0x00, 0x3F, 10, 5, 2, 90, 95, 100],
-        );
+        transport.add_response(0x04, 0x27, vec![0x00, 0x3F, 10, 5, 2, 90, 95, 100]);
 
         let thresholds = get_sensor_thresholds(&mut transport, 1)
             .await
@@ -265,11 +285,7 @@ mod tests {
 
         // Only upper critical (bit 4) and lower critical (bit 1) readable.
         // mask = 0x12
-        transport.add_response(
-            0x04,
-            0x27,
-            vec![0x00, 0x12, 0, 5, 0, 0, 95, 0],
-        );
+        transport.add_response(0x04, 0x27, vec![0x00, 0x12, 0, 5, 0, 0, 95, 0]);
 
         let thresholds = get_sensor_thresholds(&mut transport, 2)
             .await

@@ -28,8 +28,8 @@ use byteorder::{ByteOrder, LittleEndian};
 use crate::error::{IpmitoolError, Result};
 use crate::transport::IpmiTransport;
 use crate::types::{
-    decode_fru_field, FruBoardInfo, FruChassisInfo, FruCommonHeader, FruData, FruFieldEncoding,
-    FruProductInfo, IpmiRequest, NetFn,
+    FruBoardInfo, FruChassisInfo, FruCommonHeader, FruData, FruFieldEncoding, FruProductInfo,
+    IpmiRequest, NetFn, decode_fru_field,
 };
 
 // ==============================================================================
@@ -78,10 +78,7 @@ pub async fn get_fru_inventory_area_info(
 ///
 /// Returns an error if the transport fails or the BMC persistently rejects
 /// read requests.
-pub async fn read_fru_data(
-    transport: &mut impl IpmiTransport,
-    fru_id: u8,
-) -> Result<Vec<u8>> {
+pub async fn read_fru_data(transport: &mut impl IpmiTransport, fru_id: u8) -> Result<Vec<u8>> {
     let (area_size, _is_words) = get_fru_inventory_area_info(transport, fru_id).await?;
 
     let mut buffer = Vec::with_capacity(area_size as usize);

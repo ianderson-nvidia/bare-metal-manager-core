@@ -424,13 +424,9 @@ mod tests {
         ];
         transport.add_response(0x06, 0x38, resp);
 
-        let caps = get_channel_auth_capabilities(
-            &mut transport,
-            1,
-            PrivilegeLevel::Administrator,
-        )
-        .await
-        .expect("should parse auth capabilities");
+        let caps = get_channel_auth_capabilities(&mut transport, 1, PrivilegeLevel::Administrator)
+            .await
+            .expect("should parse auth capabilities");
 
         assert_eq!(caps.channel, 1);
         assert!(caps.ipmi_v2_0);
@@ -450,12 +446,8 @@ mod tests {
         // Only 4 data bytes — too short (need 8).
         transport.add_response(0x06, 0x38, vec![0x00, 0x01, 0x16, 0x04, 0x02]);
 
-        let result = get_channel_auth_capabilities(
-            &mut transport,
-            1,
-            PrivilegeLevel::Administrator,
-        )
-        .await;
+        let result =
+            get_channel_auth_capabilities(&mut transport, 1, PrivilegeLevel::Administrator).await;
         assert!(result.is_err());
     }
 
@@ -565,13 +557,9 @@ mod tests {
             .await
             .expect("set channel access should succeed");
 
-        let read_back = get_channel_access(
-            &mut transport,
-            1,
-            ChannelAccessType::NonVolatile,
-        )
-        .await
-        .expect("get channel access should succeed");
+        let read_back = get_channel_access(&mut transport, 1, ChannelAccessType::NonVolatile)
+            .await
+            .expect("get channel access should succeed");
 
         assert!(read_back.alerting_enabled);
         assert!(read_back.per_message_auth);

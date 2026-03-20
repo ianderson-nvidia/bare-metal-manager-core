@@ -80,10 +80,10 @@
 
 use std::net::IpAddr;
 
-use ipmitool::cmd::{chassis, mc, raw};
-use ipmitool::transport::lanplus::LanplusTransport;
-use ipmitool::transport::IpmiTransport;
 use ipmitool::ConnectionConfig;
+use ipmitool::cmd::{chassis, mc, raw};
+use ipmitool::transport::IpmiTransport;
+use ipmitool::transport::lanplus::LanplusTransport;
 
 /// Connect to a BMC and return an active transport session.
 ///
@@ -118,11 +118,7 @@ async fn connect_to_bmc(
 ///
 /// After:
 ///   mc::cold_reset(&mut transport)
-async fn bmc_cold_reset(
-    bmc_ip: IpAddr,
-    username: &str,
-    password: &str,
-) -> eyre::Result<()> {
+async fn bmc_cold_reset(bmc_ip: IpAddr, username: &str, password: &str) -> eyre::Result<()> {
     let mut transport = connect_to_bmc(bmc_ip, username, password).await?;
 
     mc::cold_reset(&mut transport)

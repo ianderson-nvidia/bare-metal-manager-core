@@ -39,19 +39,17 @@ use tracing::{debug, instrument, trace, warn};
 use self::header::{IpmiMsgHeader, PayloadType};
 use self::packet::{build_authenticated_packet, build_pre_session_packet, parse_packet};
 use self::rakp::{
-    build_open_session_request, build_rakp1, build_rakp3, parse_open_session_response,
-    parse_rakp2, parse_rakp4, verify_rakp2_hmac, verify_rakp4_icv, Rakp2HmacParams,
-    Rakp3Params,
+    Rakp2HmacParams, Rakp3Params, build_open_session_request, build_rakp1, build_rakp3,
+    parse_open_session_response, parse_rakp2, parse_rakp4, verify_rakp2_hmac, verify_rakp4_icv,
 };
 use self::session::{ActiveSession, SessionState};
+use crate::ConnectionConfig;
 use crate::crypto::{aes_cbc, hmac_auth, keys};
 use crate::error::{IpmitoolError, Result};
 use crate::transport::IpmiTransport;
 use crate::types::{
-    CipherSuiteId, IpmiRequest, IpmiResponse, IntegrityAlgorithm, NetFn,
-    PrivilegeLevel,
+    CipherSuiteId, IntegrityAlgorithm, IpmiRequest, IpmiResponse, NetFn, PrivilegeLevel,
 };
-use crate::ConnectionConfig;
 
 /// Maximum size of a single RMCP+ UDP packet.
 const MAX_PACKET_SIZE: usize = 1024;
@@ -86,14 +84,13 @@ impl LanplusTransport {
     /// session, or the RAKP authentication fails.
     #[instrument(skip(config), fields(host = %config.host, port = config.port))]
     pub async fn connect(config: ConnectionConfig) -> Result<Self> {
-        let cipher_suite = crate::types::cipher_suite_by_id(config.cipher_suite).ok_or_else(
-            || {
+        let cipher_suite =
+            crate::types::cipher_suite_by_id(config.cipher_suite).ok_or_else(|| {
                 IpmitoolError::Transport(format!(
                     "unsupported cipher suite: {}",
                     config.cipher_suite
                 ))
-            },
-        )?;
+            })?;
 
         // Bind to an ephemeral local port and connect to the BMC.
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
@@ -206,8 +203,8 @@ impl LanplusTransport {
         // The IPMI message is Get Channel Auth Caps (NetFn=App 0x06,
         // Cmd=0x38) with data [channel=0x8E, privilege=0x04]. Bit 7 of the
         // channel byte requests IPMI v2.0 extended data in the response.
-        use crate::transport::lan::packet::build_v15_packet;
         use crate::transport::lan::auth::AuthType;
+        use crate::transport::lan::packet::build_v15_packet;
 
         let ipmi_msg = IpmiMsgHeader::request(0x06, 0x38, 0x00)
             .build_message(&[0x8E, PrivilegeLevel::Administrator as u8]);
@@ -237,14 +234,9 @@ impl LanplusTransport {
         let privilege = PrivilegeLevel::Administrator;
 
         // Step 1: Open Session.
-        let open_req = build_open_session_request(
-            0x00,
-            privilege,
-            console_session_id,
-            &self.cipher_suite,
-        );
-        let open_req_packet =
-            build_pre_session_packet(PayloadType::OpenSessionRequest, &open_req);
+        let open_req =
+            build_open_session_request(0x00, privilege, console_session_id, &self.cipher_suite);
+        let open_req_packet = build_pre_session_packet(PayloadType::OpenSessionRequest, &open_req);
 
         self.session = SessionState::OpenSessionSent { console_session_id };
         let open_resp_bytes = self.send_recv_raw(&open_req_packet).await?;
@@ -368,14 +360,12 @@ impl LanplusTransport {
             0x3B, // Set Session Privilege Level
             vec![privilege as u8],
         );
-        let priv_resp = self.send_recv(&priv_req).await
-            .map_err(|e| IpmitoolError::Transport(format!(
-                "Set Session Privilege Level failed: {e}"
-            )))?;
-        priv_resp.check_completion()
-            .map_err(|e| IpmitoolError::Transport(format!(
-                "Set Session Privilege Level rejected: {e}"
-            )))?;
+        let priv_resp = self.send_recv(&priv_req).await.map_err(|e| {
+            IpmitoolError::Transport(format!("Set Session Privilege Level failed: {e}"))
+        })?;
+        priv_resp.check_completion().map_err(|e| {
+            IpmitoolError::Transport(format!("Set Session Privilege Level rejected: {e}"))
+        })?;
         debug!("privilege level set to Administrator");
 
         Ok(())
@@ -391,7 +381,11 @@ impl LanplusTransport {
         let max_retries = self.config.retries;
         let mut timeout = INITIAL_TIMEOUT;
 
-        trace!(len = packet.len(), hex = hex::encode(packet), "sending RMCP+ packet");
+        trace!(
+            len = packet.len(),
+            hex = hex::encode(packet),
+            "sending RMCP+ packet"
+        );
 
         for attempt in 0..=max_retries {
             self.socket.send(packet).await?;
@@ -408,8 +402,7 @@ impl LanplusTransport {
                     if attempt < max_retries {
                         warn!(
                             attempt = attempt + 1,
-                            max_retries,
-                            "timeout, retrying with increased timeout"
+                            max_retries, "timeout, retrying with increased timeout"
                         );
                         // Escalate timeout by 1 second per retry.
                         timeout += Duration::from_secs(1);

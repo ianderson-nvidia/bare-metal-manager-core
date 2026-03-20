@@ -126,9 +126,7 @@ pub fn decode_fru_field(tl: u8, data: &[u8]) -> String {
         FruFieldEncoding::Binary => hex::encode(data),
         FruFieldEncoding::BcdPlus => decode_bcd_plus(data),
         FruFieldEncoding::SixBitAscii => decode_6bit_ascii(data),
-        FruFieldEncoding::EightBitAscii => {
-            String::from_utf8_lossy(data).trim_end().to_owned()
-        }
+        FruFieldEncoding::EightBitAscii => String::from_utf8_lossy(data).trim_end().to_owned(),
     }
 }
 

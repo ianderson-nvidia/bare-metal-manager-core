@@ -38,7 +38,10 @@ pub struct RawCommand {
 
 /// Parse a hex string (with optional "0x" prefix) into a u8.
 fn parse_hex_byte(s: &str) -> eyre::Result<u8> {
-    let s = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    let s = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
     u8::from_str_radix(s, 16).context(format!("parse hex byte from '{s}'"))
 }
 
@@ -47,10 +50,7 @@ fn parse_hex_byte(s: &str) -> eyre::Result<u8> {
 /// # Errors
 ///
 /// Returns an error if hex parsing fails or the IPMI transport fails.
-pub async fn run(
-    transport: &mut impl IpmiTransport,
-    cmd: RawCommand,
-) -> eyre::Result<()> {
+pub async fn run(transport: &mut impl IpmiTransport, cmd: RawCommand) -> eyre::Result<()> {
     let netfn_byte = parse_hex_byte(&cmd.netfn).context("parse netfn")?;
     let cmd_byte = parse_hex_byte(&cmd.cmd).context("parse command code")?;
 
@@ -61,9 +61,8 @@ pub async fn run(
         .map(|(i, s)| parse_hex_byte(s).context(format!("parse data byte {i}")))
         .collect::<eyre::Result<Vec<u8>>>()?;
 
-    let netfn = NetFn::try_from(netfn_byte).map_err(|code| {
-        eyre::eyre!("unknown network function: 0x{code:02X}")
-    })?;
+    let netfn = NetFn::try_from(netfn_byte)
+        .map_err(|code| eyre::eyre!("unknown network function: 0x{code:02X}"))?;
 
     let req = if data.is_empty() {
         IpmiRequest::new(netfn, cmd_byte)

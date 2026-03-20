@@ -60,28 +60,16 @@ pub enum UserCommand {
 ///
 /// Returns an error if the IPMI transport fails or the BMC returns an error
 /// completion code.
-pub async fn run(
-    transport: &mut impl IpmiTransport,
-    cmd: UserCommand,
-) -> eyre::Result<()> {
+pub async fn run(transport: &mut impl IpmiTransport, cmd: UserCommand) -> eyre::Result<()> {
     match cmd {
         UserCommand::List { channel } => {
             let summary = user::get_user_summary(transport, channel)
                 .await
                 .context("get user summary")?;
 
-            println!(
-                "Maximum User IDs     : {}",
-                summary.max_user_ids
-            );
-            println!(
-                "Enabled User Count   : {}",
-                summary.enabled_user_count
-            );
-            println!(
-                "Fixed Name Count     : {}",
-                summary.fixed_name_count
-            );
+            println!("Maximum User IDs     : {}", summary.max_user_ids);
+            println!("Enabled User Count   : {}", summary.enabled_user_count);
+            println!("Fixed Name Count     : {}", summary.fixed_name_count);
             println!();
 
             // Print a table header.
@@ -98,11 +86,10 @@ pub async fn run(
                     Err(_) => continue,
                 };
 
-                let access =
-                    match user::get_user_access(transport, channel, uid).await {
-                        Ok(a) => a,
-                        Err(_) => continue,
-                    };
+                let access = match user::get_user_access(transport, channel, uid).await {
+                    Ok(a) => a,
+                    Err(_) => continue,
+                };
 
                 let enabled = if access.ipmi_msg_enabled {
                     "true"
@@ -179,9 +166,7 @@ pub async fn run(
             user::set_user_access(transport, channel, user_id, priv_level, true)
                 .await
                 .context("set user access")?;
-            println!(
-                "Set user {user_id} privilege to {priv_level} on channel {channel}"
-            );
+            println!("Set user {user_id} privilege to {priv_level} on channel {channel}");
             Ok(())
         }
     }

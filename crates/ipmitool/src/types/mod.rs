@@ -554,9 +554,9 @@ impl IpmiCommand {
             | Self::SetSessionPrivilegeLevel
             | Self::CloseSession => NetFn::App,
 
-            Self::SetSensorThresholds
-            | Self::GetSensorThresholds
-            | Self::GetSensorReading => NetFn::SensorEvent,
+            Self::SetSensorThresholds | Self::GetSensorThresholds | Self::GetSensorReading => {
+                NetFn::SensorEvent
+            }
 
             Self::GetFruInventoryAreaInfo
             | Self::ReadFruData
@@ -706,12 +706,7 @@ mod tests {
 
     #[test]
     fn netfn_roundtrip() {
-        for nf in [
-            NetFn::Chassis,
-            NetFn::App,
-            NetFn::Storage,
-            NetFn::Transport,
-        ] {
+        for nf in [NetFn::Chassis, NetFn::App, NetFn::Storage, NetFn::Transport] {
             let byte: u8 = nf.into();
             let back = NetFn::try_from(byte).expect("valid netfn");
             assert_eq!(nf, back);
@@ -812,8 +807,9 @@ mod tests {
 
         for cmd in all_commands {
             let (netfn, code) = cmd.pair();
-            let back = IpmiCommand::from_pair(netfn, code)
-                .unwrap_or_else(|| panic!("from_pair failed for {cmd:?} = (0x{netfn:02x}, 0x{code:02x})"));
+            let back = IpmiCommand::from_pair(netfn, code).unwrap_or_else(|| {
+                panic!("from_pair failed for {cmd:?} = (0x{netfn:02x}, 0x{code:02x})")
+            });
             assert_eq!(cmd, back, "roundtrip failed for {cmd:?}");
         }
     }

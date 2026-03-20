@@ -79,8 +79,7 @@ impl LanplusTransport {
 
         // Enter raw mode so keystrokes are delivered immediately without
         // line-buffering or echo. The guard restores the terminal on drop.
-        let _raw_guard = crate::sol::RawModeGuard::enter()
-            .context("enable terminal raw mode")?;
+        let _raw_guard = crate::sol::RawModeGuard::enter().context("enable terminal raw mode")?;
 
         let esc = escape_char as char;
         eprintln!("[SOL session connected \u{2014} {esc}? for help]");
@@ -93,15 +92,13 @@ impl LanplusTransport {
         // the select loop can borrow `self` mutably for sequence number
         // advancement without conflicting with immutable borrows of keys.
         let (aes_key, k1, managed_sid, integrity_alg, auth_code_len) = match &self.session {
-            SessionState::Active { session } => {
-                (
-                    session.k2[..16].to_vec(),
-                    session.k1.clone(),
-                    session.managed_session_id,
-                    self.cipher_suite.integrity,
-                    self.auth_code_len(),
-                )
-            }
+            SessionState::Active { session } => (
+                session.k2[..16].to_vec(),
+                session.k1.clone(),
+                session.managed_session_id,
+                self.cipher_suite.integrity,
+                self.auth_code_len(),
+            ),
             other => eyre::bail!("session not active: {}", other.name()),
         };
 

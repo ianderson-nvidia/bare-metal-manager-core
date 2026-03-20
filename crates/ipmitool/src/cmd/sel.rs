@@ -103,9 +103,7 @@ async fn reserve_sel(transport: &mut impl IpmiTransport) -> Result<u16> {
 ///
 /// Returns an error if any transport operation fails or a record cannot
 /// be parsed.
-pub async fn get_all_sel_entries(
-    transport: &mut impl IpmiTransport,
-) -> Result<Vec<SelRecord>> {
+pub async fn get_all_sel_entries(transport: &mut impl IpmiTransport) -> Result<Vec<SelRecord>> {
     let reservation_id = reserve_sel(transport).await?;
 
     let mut entries = Vec::new();

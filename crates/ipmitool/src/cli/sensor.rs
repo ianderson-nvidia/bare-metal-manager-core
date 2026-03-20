@@ -40,10 +40,7 @@ pub enum SensorCommand {
 ///
 /// Returns an error if the IPMI transport fails or a command returns
 /// an error completion code.
-pub async fn run(
-    transport: &mut impl IpmiTransport,
-    cmd: SensorCommand,
-) -> eyre::Result<()> {
+pub async fn run(transport: &mut impl IpmiTransport, cmd: SensorCommand) -> eyre::Result<()> {
     match cmd {
         SensorCommand::List => {
             // Use the SDR to enumerate sensors, then read each one.
@@ -70,18 +67,21 @@ pub async fn run(
                             "ok"
                         };
 
-                        let value = if reading.reading_unavailable
-                            || !reading.sensor_scanning_enabled
-                        {
-                            "N/A".to_owned()
-                        } else {
-                            match &record.conversion {
-                                Some(conv) => {
-                                    format!("{:.2} {}", conv.convert(reading.raw_value), record.unit)
+                        let value =
+                            if reading.reading_unavailable || !reading.sensor_scanning_enabled {
+                                "N/A".to_owned()
+                            } else {
+                                match &record.conversion {
+                                    Some(conv) => {
+                                        format!(
+                                            "{:.2} {}",
+                                            conv.convert(reading.raw_value),
+                                            record.unit
+                                        )
+                                    }
+                                    None => format!("0x{:02X}", reading.raw_value),
                                 }
-                                None => format!("0x{:02X}", reading.raw_value),
-                            }
-                        };
+                            };
 
                         (value, status.to_owned())
                     }
@@ -134,10 +134,7 @@ pub async fn run(
 /// - Decimal number (e.g., "42")
 /// - Hex number with 0x prefix (e.g., "0x2A")
 /// - Sensor name (looked up from the SDR)
-async fn parse_sensor_id(
-    transport: &mut impl IpmiTransport,
-    id: &str,
-) -> eyre::Result<u8> {
+async fn parse_sensor_id(transport: &mut impl IpmiTransport, id: &str) -> eyre::Result<u8> {
     // Try parsing as a number first.
     if let Some(hex) = id.strip_prefix("0x").or_else(|| id.strip_prefix("0X")) {
         let num = u8::from_str_radix(hex, 16)

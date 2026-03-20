@@ -23,12 +23,11 @@
 //! endpoint always returns 200, with the IPMI completion code in the body as
 //! the real error signal.
 
-use reqwest::{header, Client};
-
-use crate::error::{IpmitoolError, Result};
-use crate::types::{IpmiRequest, IpmiResponse};
+use reqwest::{Client, header};
 
 use super::IpmiTransport;
+use crate::error::{IpmitoolError, Result};
+use crate::types::{IpmiRequest, IpmiResponse};
 
 /// Configuration for [`HttpTransport`].
 pub struct HttpTransportConfig {

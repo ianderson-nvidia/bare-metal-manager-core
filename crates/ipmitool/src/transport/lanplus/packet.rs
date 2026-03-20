@@ -88,8 +88,7 @@ pub fn build_authenticated_packet(
     // Encrypt the payload.
     let encrypted_payload = encrypt_fn(payload)?;
 
-    let mut session =
-        SessionHeader::authenticated(payload_type, session_id, session_seq);
+    let mut session = SessionHeader::authenticated(payload_type, session_id, session_seq);
     session.payload_length = encrypted_payload.len() as u16;
 
     // Build the packet up through the payload.
@@ -266,10 +265,7 @@ mod tests {
 
         // Verify session header.
         let session = SessionHeader::from_bytes(&packet[4..16]).expect("valid session");
-        assert_eq!(
-            session.payload_type(),
-            Ok(PayloadType::OpenSessionRequest)
-        );
+        assert_eq!(session.payload_type(), Ok(PayloadType::OpenSessionRequest));
         assert_eq!(session.session_id, 0);
         assert_eq!(session.session_seq, 0);
         assert_eq!(session.payload_length, 4);
@@ -299,8 +295,8 @@ mod tests {
             0xDEADBEEF,
             1,
             &payload,
-            |p| Ok(p.to_vec()),          // No-op "encryption"
-            |_data| Ok(vec![0xAA; 12]),   // Fixed 12-byte auth code
+            |p| Ok(p.to_vec()),         // No-op "encryption"
+            |_data| Ok(vec![0xAA; 12]), // Fixed 12-byte auth code
         )
         .expect("build packet");
 

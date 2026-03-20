@@ -228,20 +228,14 @@ mod tests {
     fn raw_md5_empty_string() {
         // MD5("") = d41d8cd98f00b204e9800998ecf8427e
         let hash = raw_md5(b"");
-        assert_eq!(
-            hex::encode(hash),
-            "d41d8cd98f00b204e9800998ecf8427e"
-        );
+        assert_eq!(hex::encode(hash), "d41d8cd98f00b204e9800998ecf8427e");
     }
 
     #[test]
     fn raw_md5_known_value() {
         // MD5("abc") = 900150983cd24fb0d6963f7d28e17f72
         let hash = raw_md5(b"abc");
-        assert_eq!(
-            hex::encode(hash),
-            "900150983cd24fb0d6963f7d28e17f72"
-        );
+        assert_eq!(hex::encode(hash), "900150983cd24fb0d6963f7d28e17f72");
     }
 
     // =========================================================================

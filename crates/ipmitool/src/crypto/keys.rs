@@ -27,10 +27,9 @@
 //! The HMAC algorithm used for key derivation matches the authentication
 //! algorithm negotiated during session open.
 
+use super::hmac_auth;
 use crate::error::Result;
 use crate::types::AuthAlgorithm;
-
-use super::hmac_auth;
 
 /// The constant byte repeated to form the K1 derivation input.
 const K1_CONSTANT: u8 = 0x01;
@@ -143,8 +142,7 @@ mod tests {
         let role = 0x04; // Administrator
         let username = b"admin";
 
-        let sik =
-            derive_sik(AuthAlgorithm::HmacSha256, kg, &rm, &rc, role, username).expect("sik");
+        let sik = derive_sik(AuthAlgorithm::HmacSha256, kg, &rm, &rc, role, username).expect("sik");
         assert_eq!(sik.len(), 32, "SHA256 SIK should be 32 bytes");
     }
 
@@ -156,8 +154,7 @@ mod tests {
         let role = 0x04;
         let username = b"admin";
 
-        let sik =
-            derive_sik(AuthAlgorithm::HmacSha1, kg, &rm, &rc, role, username).expect("sik");
+        let sik = derive_sik(AuthAlgorithm::HmacSha1, kg, &rm, &rc, role, username).expect("sik");
         assert_eq!(sik.len(), 20, "SHA1 SIK should be 20 bytes");
     }
 

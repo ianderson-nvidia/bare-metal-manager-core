@@ -41,9 +41,7 @@ use byteorder::{ByteOrder, LittleEndian};
 
 use crate::crypto::hmac_auth;
 use crate::error::{IpmitoolError, Result};
-use crate::types::{
-    AuthAlgorithm, CipherSuiteId, PrivilegeLevel,
-};
+use crate::types::{AuthAlgorithm, CipherSuiteId, PrivilegeLevel};
 
 // ==============================================================================
 // RMCP+ Status Codes
@@ -323,8 +321,7 @@ pub struct Rakp2HmacParams<'a> {
 ///
 /// Returns an error if the HMAC does not match.
 pub fn verify_rakp2_hmac(params: &Rakp2HmacParams<'_>) -> Result<()> {
-    let mut hmac_data =
-        Vec::with_capacity(4 + 4 + 16 + 16 + 16 + 1 + 1 + params.username.len());
+    let mut hmac_data = Vec::with_capacity(4 + 4 + 16 + 16 + 16 + 1 + 1 + params.username.len());
 
     let mut buf = [0u8; 4];
     LittleEndian::write_u32(&mut buf, params.console_session_id);
@@ -505,11 +502,7 @@ pub fn verify_rakp4_icv(
 // ==============================================================================
 
 /// Compute a RAKP HMAC using the appropriate algorithm.
-fn compute_rakp_hmac(
-    auth_alg: AuthAlgorithm,
-    key: &[u8],
-    data: &[u8],
-) -> Result<Vec<u8>> {
+fn compute_rakp_hmac(auth_alg: AuthAlgorithm, key: &[u8], data: &[u8]) -> Result<Vec<u8>> {
     match auth_alg {
         AuthAlgorithm::HmacSha1 => hmac_auth::rakp_hmac_sha1(key, data),
         AuthAlgorithm::HmacSha256 => hmac_auth::rakp_hmac_sha256(key, data),
@@ -521,9 +514,7 @@ fn compute_rakp_hmac(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{
-        cipher_suite_by_id, ConfidentialityAlgorithm, IntegrityAlgorithm,
-    };
+    use crate::types::{ConfidentialityAlgorithm, IntegrityAlgorithm, cipher_suite_by_id};
 
     // =========================================================================
     // Open Session Request
@@ -532,12 +523,8 @@ mod tests {
     #[test]
     fn open_session_request_serialization() {
         let suite = cipher_suite_by_id(17).expect("suite 17 exists");
-        let payload = build_open_session_request(
-            0x00,
-            PrivilegeLevel::Administrator,
-            0xDEADBEEF,
-            &suite,
-        );
+        let payload =
+            build_open_session_request(0x00, PrivilegeLevel::Administrator, 0xDEADBEEF, &suite);
 
         // Total length: 8 (header) + 8 (auth) + 8 (integrity) + 8 (conf) = 32
         assert_eq!(payload.len(), 32);
@@ -547,30 +534,20 @@ mod tests {
         // Privilege.
         assert_eq!(payload[1], PrivilegeLevel::Administrator as u8);
         // Console session ID (LE).
-        assert_eq!(
-            LittleEndian::read_u32(&payload[4..8]),
-            0xDEADBEEF
-        );
+        assert_eq!(LittleEndian::read_u32(&payload[4..8]), 0xDEADBEEF);
         // Auth algorithm = HMAC-SHA256 (0x03).
         assert_eq!(payload[12], AuthAlgorithm::HmacSha256 as u8);
         // Integrity algorithm = HMAC-SHA256-128 (0x04).
         assert_eq!(payload[20], IntegrityAlgorithm::HmacSha256_128 as u8);
         // Confidentiality algorithm = AES-CBC-128 (0x01).
-        assert_eq!(
-            payload[28],
-            ConfidentialityAlgorithm::AesCbc128 as u8
-        );
+        assert_eq!(payload[28], ConfidentialityAlgorithm::AesCbc128 as u8);
     }
 
     #[test]
     fn open_session_request_roundtrip() {
         let suite = cipher_suite_by_id(3).expect("suite 3 exists");
-        let payload = build_open_session_request(
-            0x42,
-            PrivilegeLevel::Operator,
-            0x12345678,
-            &suite,
-        );
+        let payload =
+            build_open_session_request(0x42, PrivilegeLevel::Operator, 0x12345678, &suite);
 
         // Verify we can read back the console session ID.
         assert_eq!(LittleEndian::read_u32(&payload[4..8]), 0x12345678);
@@ -648,13 +625,7 @@ mod tests {
     #[test]
     fn rakp1_empty_username() {
         let rc = [0; 16];
-        let payload = build_rakp1(
-            0x00,
-            1,
-            &rc,
-            PrivilegeLevel::User,
-            b"",
-        );
+        let payload = build_rakp1(0x00, 1, &rc, PrivilegeLevel::User, b"");
 
         // Length: 28 (no username bytes).
         assert_eq!(payload.len(), 28);
@@ -730,8 +701,7 @@ mod tests {
         hmac_data.push(username.len() as u8);
         hmac_data.extend_from_slice(username);
 
-        let expected_hmac =
-            hmac_auth::hmac_sha256(password, &hmac_data).expect("hmac computation");
+        let expected_hmac = hmac_auth::hmac_sha256(password, &hmac_data).expect("hmac computation");
 
         // Verification should succeed with the correct HMAC.
         verify_rakp2_hmac(&Rakp2HmacParams {
@@ -779,19 +749,21 @@ mod tests {
             hmac_auth::hmac_sha256(wrong_password, &hmac_data).expect("hmac computation");
 
         // Verification should fail.
-        assert!(verify_rakp2_hmac(&Rakp2HmacParams {
-            auth_alg: AuthAlgorithm::HmacSha256,
-            password,
-            console_session_id: console_sid,
-            managed_session_id: managed_sid,
-            rc: &rc,
-            rm: &rm,
-            managed_guid: &guid,
-            role,
-            username,
-            received_hmac: &wrong_hmac,
-        })
-        .is_err());
+        assert!(
+            verify_rakp2_hmac(&Rakp2HmacParams {
+                auth_alg: AuthAlgorithm::HmacSha256,
+                password,
+                console_session_id: console_sid,
+                managed_session_id: managed_sid,
+                rc: &rc,
+                rm: &rm,
+                managed_guid: &guid,
+                role,
+                username,
+                received_hmac: &wrong_hmac,
+            })
+            .is_err()
+        );
     }
 
     // =========================================================================
@@ -822,10 +794,7 @@ mod tests {
         assert!(payload.len() > 8, "payload should contain auth code");
         assert_eq!(payload[0], 0x02); // message_tag
         assert_eq!(payload[1], 0x00); // status = success
-        assert_eq!(
-            LittleEndian::read_u32(&payload[4..8]),
-            0x05060708
-        );
+        assert_eq!(LittleEndian::read_u32(&payload[4..8]), 0x05060708);
 
         // Verify the auth code by computing it independently.
         let mut hmac_data = Vec::new();
@@ -878,8 +847,7 @@ mod tests {
         icv_data.extend_from_slice(&buf);
         icv_data.extend_from_slice(&guid);
 
-        let full_hmac =
-            hmac_auth::hmac_sha256(&sik, &icv_data).expect("hmac computation");
+        let full_hmac = hmac_auth::hmac_sha256(&sik, &icv_data).expect("hmac computation");
         // SHA256 ICV is truncated to 16 bytes.
         let expected_icv = &full_hmac[..16];
 
@@ -910,18 +878,19 @@ mod tests {
         icv_data.extend_from_slice(&buf);
         icv_data.extend_from_slice(&guid);
 
-        let wrong_hmac =
-            hmac_auth::hmac_sha256(&wrong_sik, &icv_data).expect("hmac computation");
+        let wrong_hmac = hmac_auth::hmac_sha256(&wrong_sik, &icv_data).expect("hmac computation");
         let wrong_icv = &wrong_hmac[..16];
 
-        assert!(verify_rakp4_icv(
-            AuthAlgorithm::HmacSha256,
-            &sik,
-            &rc,
-            managed_sid,
-            &guid,
-            wrong_icv,
-        )
-        .is_err());
+        assert!(
+            verify_rakp4_icv(
+                AuthAlgorithm::HmacSha256,
+                &sik,
+                &rc,
+                managed_sid,
+                &guid,
+                wrong_icv,
+            )
+            .is_err()
+        );
     }
 }

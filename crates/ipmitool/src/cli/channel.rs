@@ -19,9 +19,7 @@
 
 use eyre::Context;
 
-use crate::cmd::channel::{
-    self, ChannelAccessType,
-};
+use crate::cmd::channel::{self, ChannelAccessType};
 use crate::transport::IpmiTransport;
 use crate::types::PrivilegeLevel;
 
@@ -63,23 +61,18 @@ pub enum ChannelCommand {
 ///
 /// Returns an error if the IPMI transport fails or the BMC returns an error
 /// completion code.
-pub async fn run(
-    transport: &mut impl IpmiTransport,
-    cmd: ChannelCommand,
-) -> eyre::Result<()> {
+pub async fn run(transport: &mut impl IpmiTransport, cmd: ChannelCommand) -> eyre::Result<()> {
     match cmd {
         ChannelCommand::Authcap {
             channel: ch,
             privilege,
         } => {
-            let priv_level = PrivilegeLevel::try_from(privilege).map_err(|v| {
-                eyre::eyre!("invalid privilege level: 0x{v:02X} (use 1-5)")
-            })?;
+            let priv_level = PrivilegeLevel::try_from(privilege)
+                .map_err(|v| eyre::eyre!("invalid privilege level: 0x{v:02X} (use 1-5)"))?;
 
-            let caps =
-                channel::get_channel_auth_capabilities(transport, ch, priv_level)
-                    .await
-                    .context("get channel auth capabilities")?;
+            let caps = channel::get_channel_auth_capabilities(transport, ch, priv_level)
+                .await
+                .context("get channel auth capabilities")?;
 
             println!("Channel number             : {}", caps.channel);
             println!(
@@ -117,11 +110,7 @@ pub async fn run(
             );
             println!(
                 "Non-null usernames         : {}",
-                if caps.non_null_usernames {
-                    "yes"
-                } else {
-                    "no"
-                }
+                if caps.non_null_usernames { "yes" } else { "no" }
             );
             println!(
                 "Null usernames             : {}",
@@ -129,11 +118,7 @@ pub async fn run(
             );
             println!(
                 "Anonymous login            : {}",
-                if caps.anonymous_login {
-                    "yes"
-                } else {
-                    "no"
-                }
+                if caps.anonymous_login { "yes" } else { "no" }
             );
             println!(
                 "OEM ID                     : {:02X}{:02X}{:02X}",
@@ -170,11 +155,11 @@ pub async fn run(
             };
 
             println!("Channel              : {}", info.channel);
-            println!("Medium Type          : {} (0x{:02X})", medium_str, info.medium_type);
             println!(
-                "Protocol Type        : 0x{:02X}",
-                info.protocol_type
+                "Medium Type          : {} (0x{:02X})",
+                medium_str, info.medium_type
             );
+            println!("Protocol Type        : 0x{:02X}", info.protocol_type);
             println!("Session Support      : {session_str}");
             println!("Active Sessions      : {}", info.active_sessions);
             println!(
@@ -194,9 +179,9 @@ pub async fn run(
             let at = match access_type.as_str() {
                 "non-volatile" | "nv" => ChannelAccessType::NonVolatile,
                 "volatile" | "active" => ChannelAccessType::Volatile,
-                other => eyre::bail!(
-                    "unknown access type: {other} (use 'non-volatile' or 'volatile')"
-                ),
+                other => {
+                    eyre::bail!("unknown access type: {other} (use 'non-volatile' or 'volatile')")
+                }
             };
 
             let access = channel::get_channel_access(transport, ch, at)
@@ -241,10 +226,9 @@ pub async fn run(
             Ok(())
         }
         ChannelCommand::GetCipherSuites { channel: ch } => {
-            let data =
-                channel::get_channel_cipher_suites(transport, ch)
-                    .await
-                    .context("get channel cipher suites")?;
+            let data = channel::get_channel_cipher_suites(transport, ch)
+                .await
+                .context("get channel cipher suites")?;
 
             if data.is_empty() {
                 println!("No cipher suites reported for channel {ch}");

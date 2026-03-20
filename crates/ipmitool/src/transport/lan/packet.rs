@@ -31,10 +31,9 @@
 
 use byteorder::{ByteOrder, LittleEndian};
 
+use super::auth::AuthType;
 use crate::error::{IpmitoolError, Result};
 use crate::transport::lanplus::header::RmcpHeader;
-
-use super::auth::AuthType;
 
 // ==============================================================================
 // Parsed Packet
@@ -208,13 +207,7 @@ mod tests {
             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
             0x0F, 0x10,
         ];
-        let packet = build_v15_packet(
-            AuthType::Md5,
-            42,
-            0x1234_5678,
-            Some(&auth_code),
-            &ipmi_msg,
-        );
+        let packet = build_v15_packet(AuthType::Md5, 42, 0x1234_5678, Some(&auth_code), &ipmi_msg);
 
         let parsed = parse_v15_packet(&packet).expect("valid packet");
         assert_eq!(parsed.auth_type, AuthType::Md5);

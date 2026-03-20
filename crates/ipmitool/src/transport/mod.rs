@@ -17,9 +17,9 @@
 
 //! IPMI transport layer — defines the trait and transport implementations.
 
+pub mod http;
 pub mod lan;
 pub mod lanplus;
-pub mod http;
 #[cfg(test)]
 pub mod mock;
 

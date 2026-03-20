@@ -92,9 +92,7 @@ pub struct WatchdogTimer {
 ///
 /// Returns an error if the transport fails, the BMC returns a non-success
 /// completion code, or the response is too short.
-pub async fn get_device_id(
-    transport: &mut impl IpmiTransport,
-) -> Result<DeviceId> {
+pub async fn get_device_id(transport: &mut impl IpmiTransport) -> Result<DeviceId> {
     let req = IpmiRequest::new(NetFn::App, 0x01);
     let resp = transport.send_recv(&req).await?;
     resp.check_completion()?;
@@ -110,8 +108,7 @@ pub async fn get_device_id(
 
     let d = &resp.data;
 
-    let manufacturer_id =
-        u32::from(d[6]) | (u32::from(d[7]) << 8) | (u32::from(d[8]) << 16);
+    let manufacturer_id = u32::from(d[6]) | (u32::from(d[7]) << 8) | (u32::from(d[8]) << 16);
 
     let product_id = u16::from(d[9]) | (u16::from(d[10]) << 8);
 
@@ -171,9 +168,7 @@ pub async fn warm_reset(transport: &mut impl IpmiTransport) -> Result<()> {
 ///
 /// Returns an error if the transport fails, the BMC returns a non-success
 /// completion code, or the response is too short.
-pub async fn get_self_test_results(
-    transport: &mut impl IpmiTransport,
-) -> Result<SelfTestResult> {
+pub async fn get_self_test_results(transport: &mut impl IpmiTransport) -> Result<SelfTestResult> {
     let req = IpmiRequest::new(NetFn::App, 0x04);
     let resp = transport.send_recv(&req).await?;
     resp.check_completion()?;
@@ -199,9 +194,7 @@ pub async fn get_self_test_results(
 ///
 /// Returns an error if the transport fails, the BMC returns a non-success
 /// completion code, or the response is not exactly 16 bytes.
-pub async fn get_device_guid(
-    transport: &mut impl IpmiTransport,
-) -> Result<[u8; 16]> {
+pub async fn get_device_guid(transport: &mut impl IpmiTransport) -> Result<[u8; 16]> {
     let req = IpmiRequest::new(NetFn::App, 0x37);
     let resp = transport.send_recv(&req).await?;
     resp.check_completion()?;
@@ -226,9 +219,7 @@ pub async fn get_device_guid(
 ///
 /// Returns an error if the transport fails, the BMC returns a non-success
 /// completion code, or the response is too short.
-pub async fn get_watchdog_timer(
-    transport: &mut impl IpmiTransport,
-) -> Result<WatchdogTimer> {
+pub async fn get_watchdog_timer(transport: &mut impl IpmiTransport) -> Result<WatchdogTimer> {
     let req = IpmiRequest::new(NetFn::App, 0x25);
     let resp = transport.send_recv(&req).await?;
     resp.check_completion()?;
@@ -259,9 +250,7 @@ pub async fn get_watchdog_timer(
 ///
 /// Returns an error if the transport fails or the BMC returns a non-success
 /// completion code.
-pub async fn reset_watchdog_timer(
-    transport: &mut impl IpmiTransport,
-) -> Result<()> {
+pub async fn reset_watchdog_timer(transport: &mut impl IpmiTransport) -> Result<()> {
     let req = IpmiRequest::new(NetFn::App, 0x22);
     let resp = transport.send_recv(&req).await?;
     resp.check_completion()
@@ -381,8 +370,8 @@ mod tests {
         let mut transport = MockTransport::new();
         let mut resp = vec![0x00]; // completion code
         let guid_bytes: [u8; 16] = [
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
-            0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
+            0x0F, 0x10,
         ];
         resp.extend_from_slice(&guid_bytes);
         transport.add_response(0x06, 0x37, resp);
