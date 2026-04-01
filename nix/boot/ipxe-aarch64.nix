@@ -1,0 +1,142 @@
+# ==============================================================================
+# carbide iPXE EFI bootloader for aarch64
+#
+# Builds two EFI binaries from upstream iPXE with carbide-specific patches
+# and config headers applied:
+#
+#   $out/blobs/aarch64/ipxe.efi
+#   $out/blobs/aarch64/golan.efi
+#
+# Cross-compilation: this derivation runs on x86_64 build hosts but
+# produces aarch64 output. We use pkgsCross.aarch64-multiplatform.gcc13Stdenv
+# which provides a complete cross-toolchain (gcc, binutils, linker hooks).
+# nativeBuildInputs (perl, xz) come from pkgs (x86_64) because they're
+# host tools; nothing in buildInputs because iPXE is freestanding.
+#
+# Replaces these cargo-make tasks:
+#   - ipxe-config (copying headers)
+#   - ipxe-patch-mlnx (Mellanox BlueField NIC support)
+#   - ipxe-patch-grace-grace (Supermicro Grace/Grace servers)
+#   - ipxe-patch-efi-rng (ARM EFI RNG retry)
+#   - ipxe-build-efi-aarch64
+#   - ipxe-install-efi-aarch64
+# ==============================================================================
+{
+  pkgs,
+
+  # Upstream commit to build (mirrors the submodule pin).
+  ipxeRev,
+  ipxeHash,
+
+  # Patches applied in order via stdenv's patchPhase.
+  ipxePatches,
+
+  # Carbide-specific config headers copied into src/config/local/.
+  ipxeConfigHeaders,
+
+  # Free-form version string baked into the iPXE banner.
+  bannerVersion ? "carbide",
+
+  # iPXE boot script to embed in the EFI binary. iPXE runs this script
+  # right after init, before falling through to the built-in autoboot.
+  # Without it, the EFI image is stock-iPXE-with-our-banner and runs
+  # only autoboot on each NIC — which is what produces the "Nothing to
+  # boot" pattern when no DHCP next-server/filename is offered.
+  # Mirrors cargo-make's `EMBED=...` flag in pxe/Makefile.toml's
+  # `ipxe-build-efi-aarch64` task.
+  embedScript,
+}:
+
+let
+  # Cross-compile target. The .gcc13Stdenv suffix matches the gcc version
+  # used in ipxe-x86.nix so both arches get the same toolchain generation.
+  crossStdenv = pkgs.pkgsCross.aarch64-multiplatform.gcc13Stdenv;
+in
+
+crossStdenv.mkDerivation {
+  pname = "carbide-ipxe-efi-aarch64";
+  version = bannerVersion;
+
+  src = pkgs.fetchFromGitHub {
+    owner = "ipxe";
+    repo = "ipxe";
+    rev = ipxeRev;
+    hash = ipxeHash;
+  };
+
+  patches = ipxePatches;
+
+  postPatch = ''
+    mkdir -p src/config/local
+    ${pkgs.lib.concatMapStringsSep "\n" (
+      h: "install -m 644 ${h} src/config/local/${baseNameOf (toString h)}"
+    ) ipxeConfigHeaders}
+  '';
+
+  # nativeBuildInputs run on the build host (x86_64), so they come from
+  # `pkgs` not `pkgsCross`. perl + xz are pure-Perl/userspace tools the
+  # iPXE makefiles invoke during codegen.
+  #
+  # gcc13 (host) is needed in addition to the cross compiler because
+  # iPXE's makefile builds host-side utilities (notably util/elf2efi64,
+  # which converts ELF intermediates to PE32+ EFI). HOST_CC defaults to
+  # plain `gcc`, which doesn't exist in a cross-only sandbox — only
+  # `aarch64-unknown-linux-gnu-gcc` would be there. Adding pkgs.gcc13
+  # provides an x86_64 gcc for HOSTCC.
+  nativeBuildInputs = with pkgs; [
+    perl
+    xz
+    gcc13
+  ];
+
+  dontConfigure = true;
+
+  # The cross stdenv exports CC/LD/AR that point at the aarch64 toolchain
+  # (e.g. CC=aarch64-unknown-linux-gnu-gcc). iPXE's Makefile honors these,
+  # so make builds the aarch64 EFI binaries without us having to pass
+  # CROSS_COMPILE explicitly. The CROSS_COMPILE= flag overrides any
+  # autodetection just to make the targeting unambiguous in the build log.
+  buildPhase = ''
+    runHook preBuild
+    cd src
+
+    # CROSS_COMPILE makes iPXE use the cross toolchain for target code.
+    # HOST_CC explicitly points at the x86_64 gcc for build-time tools
+    # (elf2efi64, etc.) — without this, iPXE's makefile would invoke
+    # plain `gcc`, which the cross-stdenv sandbox doesn't expose.
+    make -j$NIX_BUILD_CORES \
+      CROSS_COMPILE=${crossStdenv.cc.targetPrefix} \
+      HOST_CC=${pkgs.gcc13}/bin/gcc \
+      EMBED=${embedScript} \
+      bin-arm64-efi/ipxe.efi \
+      bin-arm64-efi/golan.efi \
+      VERSION=${bannerVersion}
+
+    runHook postBuild
+  '';
+
+  installPhase = ''
+    runHook preInstall
+
+    # Layout matches cargo-make output:
+    #   pxe/static/blobs/internal/aarch64/ipxe.efi  (already named ipxe.efi
+    #     by iPXE for arm64, unlike x86 which renames from snponly.efi)
+    #   pxe/static/blobs/internal/aarch64/golan.efi
+    mkdir -p $out/blobs/aarch64
+    install -m 644 bin-arm64-efi/ipxe.efi  $out/blobs/aarch64/ipxe.efi
+    install -m 644 bin-arm64-efi/golan.efi $out/blobs/aarch64/golan.efi
+
+    runHook postInstall
+  '';
+
+  # EFI binaries don't need fixup hooks — they're standalone bootloaders
+  # with no RPATHs or ELF interpreter.
+  dontFixup = true;
+
+  meta = {
+    description = "iPXE EFI bootloader for aarch64 with carbide patches";
+    homepage = "https://ipxe.org/";
+    license = pkgs.lib.licenses.gpl2Plus;
+    platforms = [ "x86_64-linux" "aarch64-linux" ];
+  };
+}

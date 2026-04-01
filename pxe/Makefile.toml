@@ -23,13 +23,6 @@ PKG_VERSION = { script = [
 ], condition = { env_not_set = ["PKG_VERSION"] } }
 FORGE_CA_PATH = { value = "${REPO_ROOT}/dev/forge_prodroot.pem" }
 
-# Where mkosi keeps downloaded distro packages. Without this mkosi re-downloads
-# the full package set on every build, which dominated the ephemeral image jobs
-# in CI. Purely a download cache -- mkosi still revalidates package metadata, so
-# a stale entry cannot silently change what lands in the image. CI persists this
-# across runs with actions/cache; locally it just makes rebuilds faster.
-MKOSI_PACKAGE_CACHE_DIR = { value = "${REPO_ROOT}/pxe/.mkosi-package-cache", condition = { env_not_set = ["MKOSI_PACKAGE_CACHE_DIR"] } }
-
 # BlueField Bundle (BFB) Version
 # NOTE: Update `crates/api/src/cfg/file.rs` to set the DOCA BFB component versions (BMC, NIC, CEC fw)
 # so that Carbide treats them as the expected DPU fw versions.
@@ -122,18 +115,10 @@ dependencies = [
 ]
 
 [tasks.stage-scout-loader-rclocal]
-description = "Copies the Scout loader helpers to the scout loader profile directories"
+description = "Copies the rc.local script to the scout loader profile directories"
 script = '''
-  set -e
-
   cp ${REPO_ROOT}/pxe/common_files/scout-loader-rclocal ${REPO_ROOT}/pxe/mkosi.profiles/scout-loader-aarch64/mkosi.extra/etc/rc.local
   cp ${REPO_ROOT}/pxe/common_files/scout-loader-rclocal ${REPO_ROOT}/pxe/mkosi.profiles/scout-loader-x86_64/mkosi.extra/etc/rc.local
-
-  mkdir -p ${REPO_ROOT}/pxe/mkosi.profiles/scout-loader-aarch64/mkosi.extra/opt/forge/
-  cp ${REPO_ROOT}/pxe/common_files/forge-scout-network.sh ${REPO_ROOT}/pxe/mkosi.profiles/scout-loader-aarch64/mkosi.extra/opt/forge/
-
-  mkdir -p ${REPO_ROOT}/pxe/mkosi.profiles/scout-loader-x86_64/mkosi.extra/opt/forge/
-  cp ${REPO_ROOT}/pxe/common_files/forge-scout-network.sh ${REPO_ROOT}/pxe/mkosi.profiles/scout-loader-x86_64/mkosi.extra/opt/forge/
 '''
 
 [tasks.stage-scout-update-check]
@@ -192,6 +177,20 @@ dependencies = [
   "setup-apt-repo-amd64",
 ]
 
+# Nix-staging counterpart to `build-boot-artifacts-x86-host-ci`.
+# Expects:
+#   nix build .#packages.x86_64-linux.boot-stage-x86 -o result-boot-x86
+# which produces ipxe.efi, golan.efi, and forge-scout_<ver>_amd64.deb
+# under `result-boot-x86/`. The `-from-nix` leaf tasks below read from
+# there instead of compiling iPXE locally or rebuilding the deb via
+# `package-scout-x86_64-release-local`.
+[tasks.build-boot-artifacts-x86-host-from-nix]
+dependencies = [
+  "mkdir-static",
+  "ipxe-x86_64-from-nix",
+  "setup-apt-repo-amd64-from-nix",
+]
+
 # This probably doesn't work yet.  there's no support for building arm images locally
 [tasks.build-boot-artifacts-arm-host]
 dependencies = [
@@ -218,7 +217,6 @@ dependencies = [
 dependencies = [
   "mkdir-static",
   { name = "package-scout-aarch64-release-cross", path = "${REPO_ROOT}" },
-  "create-ephemeral-image-arm-host",
   "bfb-aarch64-sa",
   "ipxe-aarch64-sa",
   "setup-apt-repo-arm64",
@@ -259,15 +257,26 @@ dependencies = [
   "add-secure-boot-pk-pem",
 ]
 
-# CI wrapper: build and package only the aarch64 forge-scout `.deb`. The
-# ephemeral-image build consumes exactly this one file from the boot stage
-# (see `copy-forge-scout-aarch64`), so CI runs this on its own to unblock the
-# mkosi build instead of serializing it behind the full bfb assembly above.
-# The bfb task keeps its own package-scout dependency: its apt repo ships the
-# deb inside the boot image.
-[tasks.package-scout-aarch64-ci]
+# Counterpart to `build-boot-artifacts-bfb` that consumes Nix-built
+# supporting packages instead of having cargo-make compile them:
+#
+#   nix build .#packages.aarch64-linux.bfb-stage
+#   cargo make --cwd pxe build-boot-artifacts-bfb-from-nix
+#
+# `nix build` creates a `result/` symlink in REPO_ROOT containing
+# the forge-scout binary and the forge-dpu / forge-scout debs (flat
+# layout). The `-from-nix` task variants below read from there
+# instead of `target/`, and the corresponding cargo-build deps
+# (`package-scout-aarch64-release-cross`, `build-forge-dpu-deb-local`)
+# are dropped.
+[tasks.build-boot-artifacts-bfb-from-nix]
 dependencies = [
-  { name = "package-scout-aarch64-release-local", path = "${REPO_ROOT}" },
+  "mkdir-static",
+  "cleanup-pxe-submodule",
+  "bfb-aarch64-from-nix",
+  "ipxe-aarch64-from-nix",
+  "setup-apt-repo-arm64-from-nix",
+  "add-secure-boot-pk-pem",
 ]
 
 [tasks.create-ephemeral-image-x86-host-ci]
@@ -290,6 +299,26 @@ dependencies = [
   "mkosi-clean-qcow-imager",
   "mkosi-clean-scout-x86_64",
   "mkosi-clean-scout-loader-x86_64",
+]
+
+# Nix-staging counterpart to `create-ephemeral-image-x86-host-ci`.
+# Expects:
+#   nix build .#packages.x86_64-linux.ephemeral-stage -o result-ephemeral-x86
+# which produces scout.cpio.zst, scout.efi, and qcow-imager.efi under
+# `result-ephemeral-x86/`. Drops the entire mkosi build chain
+# (mkosi-build-*, mkosi-clean-*, mkosi-generate-build-tmpdir, the
+# copy-forge-scout-* and stage-* tasks that prepare the mkosi.extra
+# overlay) — Nix produced the finished images already.
+#
+# IMPORTANT — NixOS rootfs, NOT Ubuntu. These images use a different
+# init / package set / runtime layout than the mkosi ephemeral images.
+# Useful for hermetic builds and local testing; not byte-identical to
+# CI's production output.
+[tasks.create-ephemeral-image-x86-host-from-nix]
+category = "Ephemeral Image"
+dependencies = [
+  "mkdir-static",
+  "copy-ephemeral-x86_64-from-nix",
 ]
 
 [tasks.create-ephemeral-image-x86-host]
@@ -335,6 +364,19 @@ dependencies = [
   "mkosi-clean-scout-aarch64",
   "mkosi-clean-scout-loader-aarch64",
   "mkosi-clean-qcow-imager-aarch64",
+]
+
+# Nix-staging counterpart to `create-ephemeral-image-arm-host-ci`.
+# Expects:
+#   nix build .#packages.aarch64-linux.ephemeral-stage -o result-ephemeral-aarch64
+# which dispatches to the aarch64 builder, produces scout.cpio.zst,
+# scout.efi, and qcow-imager.efi under `result-ephemeral-aarch64/`.
+# Same NixOS-not-Ubuntu caveat as the x86 variant.
+[tasks.create-ephemeral-image-arm-host-from-nix]
+category = "Ephemeral Image"
+dependencies = [
+  "mkdir-static",
+  "copy-ephemeral-aarch64-from-nix",
 ]
 
 [tasks.create-ephemeral-image-arm-host]
@@ -536,8 +578,7 @@ category = "Ephemeral Image"
 script = '''
   PROFILE="scout-oss-x86_64"
   export PATH=${PATH}:/sbin
-  mkdir -p "${MKOSI_PACKAGE_CACHE_DIR}"
-  ${REPO_ROOT}/pxe/mkosi/bin/mkosi -E PKG_VERSION="${PKG_VERSION}" --profile ${PROFILE} --output-dir=${MKOSI_BUILD_TMP} --package-cache-directory=${MKOSI_PACKAGE_CACHE_DIR} --with-network build
+  ${REPO_ROOT}/pxe/mkosi/bin/mkosi -E PKG_VERSION="${PKG_VERSION}" --profile ${PROFILE} --output-dir=${MKOSI_BUILD_TMP} --with-network build
 '''
 
 [tasks.mkosi-build-scout-loader-x86_64]
@@ -545,7 +586,7 @@ category = "Ephemeral Image"
 command = "/bin/bash"
 args = [
   "-c",
-  "export PATH=${PATH}:/sbin && mkdir -p ${MKOSI_PACKAGE_CACHE_DIR} && ${REPO_ROOT}/pxe/mkosi/bin/mkosi --profile scout-loader-x86_64 --output-dir=${MKOSI_BUILD_TMP} --package-cache-directory=${MKOSI_PACKAGE_CACHE_DIR} build",
+  "export PATH=${PATH}:/sbin && ${REPO_ROOT}/pxe/mkosi/bin/mkosi --profile scout-loader-x86_64 --output-dir=${MKOSI_BUILD_TMP} build",
 ]
 
 [tasks.mkosi-build-scout-aarch64]
@@ -553,8 +594,7 @@ category = "Ephemeral Image"
 script = '''
   PROFILE="scout-oss-aarch64"
   export PATH=${PATH}:/sbin
-  mkdir -p "${MKOSI_PACKAGE_CACHE_DIR}"
-  ${REPO_ROOT}/pxe/mkosi/bin/mkosi -E PKG_VERSION="${PKG_VERSION}" --profile ${PROFILE} --output-dir=${MKOSI_BUILD_TMP} --package-cache-directory=${MKOSI_PACKAGE_CACHE_DIR} build
+  ${REPO_ROOT}/pxe/mkosi/bin/mkosi -E PKG_VERSION="${PKG_VERSION}" --profile ${PROFILE} --output-dir=${MKOSI_BUILD_TMP} build
 '''
 
 [tasks.mkosi-build-scout-loader-aarch64]
@@ -562,7 +602,7 @@ category = "Ephemeral Image"
 command = "/bin/bash"
 args = [
   "-c",
-  "export PATH=${PATH}:/sbin && mkdir -p ${MKOSI_PACKAGE_CACHE_DIR} && ${REPO_ROOT}/pxe/mkosi/bin/mkosi --profile scout-loader-aarch64 --output-dir=${MKOSI_BUILD_TMP} --package-cache-directory=${MKOSI_PACKAGE_CACHE_DIR} build",
+  "export PATH=${PATH}:/sbin && ${REPO_ROOT}/pxe/mkosi/bin/mkosi --profile scout-loader-aarch64 --output-dir=${MKOSI_BUILD_TMP} build",
 ]
 
 [tasks.mkosi-build-qcow-imager]
@@ -570,7 +610,7 @@ category = "Ephemeral Image"
 command = "/bin/bash"
 args = [
   "-c",
-  "export PATH=${PATH}:/sbin && mkdir -p ${MKOSI_PACKAGE_CACHE_DIR} && ${REPO_ROOT}/pxe/mkosi/bin/mkosi --profile qcow-imager --output-dir=${MKOSI_BUILD_TMP} --package-cache-directory=${MKOSI_PACKAGE_CACHE_DIR} build",
+  "export PATH=${PATH}:/sbin && ${REPO_ROOT}/pxe/mkosi/bin/mkosi --profile qcow-imager --output-dir=${MKOSI_BUILD_TMP} build",
 ]
 
 [tasks.mkosi-build-qcow-imager-aarch64]
@@ -578,7 +618,7 @@ category = "Ephemeral Image"
 command = "/bin/bash"
 args = [
   "-c",
-  "export PATH=${PATH}:/sbin && mkdir -p ${MKOSI_PACKAGE_CACHE_DIR} && ${REPO_ROOT}/pxe/mkosi/bin/mkosi --profile qcow-imager-aarch64 --output-dir=${MKOSI_BUILD_TMP} --package-cache-directory=${MKOSI_PACKAGE_CACHE_DIR} build",
+  "export PATH=${PATH}:/sbin && ${REPO_ROOT}/pxe/mkosi/bin/mkosi --profile qcow-imager-aarch64 --output-dir=${MKOSI_BUILD_TMP} build",
 ]
 
 [tasks.mkosi-copy-qcow-imager-to-webroot-x86_64]
@@ -635,6 +675,40 @@ args = [
 ]
 dependencies = ["mkdir-static"]
 
+# Nix-staging copy task for x86 ephemeral images. Reads scout.cpio.zst
+# + scout.efi + qcow-imager.efi from `result-ephemeral-x86/` (the
+# `nix build .#packages.x86_64-linux.ephemeral-stage` symlink) and
+# installs them at the same source-tree paths the mkosi-copy-* tasks
+# would have written to. `install -m 0644` so re-runs can overwrite.
+[tasks.copy-ephemeral-x86_64-from-nix]
+category = "Ephemeral Image"
+description = "Stage Nix-built NixOS x86 ephemeral images into the static webroot"
+dependencies = ["mkdir-static"]
+script = '''
+  install -m 0644 ${REPO_ROOT}/result-ephemeral-x86/scout.cpio.zst \
+     ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/scout.cpio.zst
+  install -m 0644 ${REPO_ROOT}/result-ephemeral-x86/scout.efi \
+     ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/scout.efi
+  install -m 0644 ${REPO_ROOT}/result-ephemeral-x86/qcow-imager.efi \
+     ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/qcow-imager.efi
+'''
+
+# Nix-staging copy task for aarch64 ephemeral images. Reads from
+# `result-ephemeral-aarch64/` (the `nix build .#packages.aarch64-linux.
+# ephemeral-stage` symlink, dispatched to the remote builder).
+[tasks.copy-ephemeral-aarch64-from-nix]
+category = "Ephemeral Image"
+description = "Stage Nix-built NixOS aarch64 ephemeral images into the static webroot"
+dependencies = ["mkdir-static"]
+script = '''
+  install -m 0644 ${REPO_ROOT}/result-ephemeral-aarch64/scout.cpio.zst \
+     ${REPO_ROOT}/pxe/static/blobs/internal/aarch64/scout.cpio.zst
+  install -m 0644 ${REPO_ROOT}/result-ephemeral-aarch64/scout.efi \
+     ${REPO_ROOT}/pxe/static/blobs/internal/aarch64/scout.efi
+  install -m 0644 ${REPO_ROOT}/result-ephemeral-aarch64/qcow-imager.efi \
+     ${REPO_ROOT}/pxe/static/blobs/internal/aarch64/qcow-imager.efi
+'''
+
 [tasks.ipxe-x86_64]
 category = "iPXE Kernel"
 description = "Build iPXE kernel for x86_64 (Legacy BIOS, EFI) and move to the carbide static webroot"
@@ -644,6 +718,21 @@ dependencies = [
   "ipxe-patch-watchdog-timeout",
   "ipxe-install-efi-x86_64",
 ]
+
+# Nix-staging replacement for ipxe-x86_64. Reads Nix-built EFI binaries
+# from `${REPO_ROOT}/result-boot-x86/` (produced by `nix build
+# .#packages.x86_64-linux.boot-stage-x86 -o result-boot-x86`). Uses
+# `install -m 0644` so subsequent runs can overwrite the 0444 files.
+[tasks.ipxe-x86_64-from-nix]
+category = "iPXE Kernel"
+description = "Stage Nix-built x86_64 iPXE EFI binaries into the static webroot"
+dependencies = ["mkdir-static"]
+script = '''
+  install -m 0644 ${REPO_ROOT}/result-boot-x86/ipxe.efi \
+     ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/ipxe.efi
+  install -m 0644 ${REPO_ROOT}/result-boot-x86/golan.efi \
+     ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/golan.efi
+'''
 
 [tasks.ipxe-config]
 category = "iPXE Kernel"
@@ -705,6 +794,30 @@ dependencies = [
   "ipxe-patch-mlnx",
   "ipxe-install-efi-aarch64",
 ]
+
+# Nix-staging replacement for ipxe-aarch64. Reads the Nix-built EFI
+# binaries from `${REPO_ROOT}/result-ipxe-aarch64/` (produced by
+# `nix build .#packages.x86_64-linux.ipxe-efi-aarch64 -o
+# result-ipxe-aarch64`) instead of compiling iPXE locally with
+# cargo-make's submodule + GCC path. The flake's iPXE builder uses an
+# older crane-stdenv that doesn't trip newer host-GCC's
+# `-Wunterminated-string-initialization` on net/pccrd.c.
+#
+# Uses `install` rather than `cp` because the source files live in
+# /nix/store with mode 0444; a plain `cp` would copy that mode to the
+# destination, and the *next* run would then fail to overwrite the
+# now-read-only target. `install -m 0644` sets a writable mode on
+# every copy and overwrites in place.
+[tasks.ipxe-aarch64-from-nix]
+category = "iPXE Kernel"
+description = "Stage Nix-built aarch64 iPXE EFI binaries into the static webroot"
+dependencies = ["mkdir-static"]
+script = '''
+  install -m 0644 ${REPO_ROOT}/result-ipxe-aarch64/blobs/aarch64/ipxe.efi \
+     ${REPO_ROOT}/pxe/static/blobs/internal/aarch64/ipxe.efi
+  install -m 0644 ${REPO_ROOT}/result-ipxe-aarch64/blobs/aarch64/golan.efi \
+     ${REPO_ROOT}/pxe/static/blobs/internal/aarch64/golan.efi
+'''
 
 [tasks.ipxe-aarch64-ci]
 category = "iPXE Kernel"
@@ -835,6 +948,14 @@ run_task = [
   ] } },
 ]
 
+# Non-SA Nix-staging counterpart to bfb-aarch64.
+[tasks.bfb-aarch64-from-nix]
+run_task = [
+  { name = "internal-bfb-aarch64-from-nix", condition = { env_not_set = [
+    "SA_ENABLEMENT",
+  ] } },
+]
+
 [tasks.internal-bfb-aarch64-sa]
 category = "iPXE Kernel"
 description = "Build iPXE kernel for aarch64 (EFI) and move to the carbide static webroot"
@@ -929,6 +1050,45 @@ dependencies = [
   "cleanup-hbn-scripts",
   { name = "build-forge-dpu-deb-local", path = "${REPO_ROOT}/bluefield" },
   "cp-forge-dpu-package-to-bfb",
+  "bfb-copy-efi",
+  "bfb-remove-extracted-efi",
+  "replace-bfpxe-script",
+  "bfb-rebuild-rootfs",
+  "bfb-copy-rootfs",
+  "bfb-rebuild-bfb",
+]
+
+# Mirror of `internal-bfb-aarch64` for the Nix-staging flow. Drops
+# the cargo-build dep `build-forge-dpu-deb-local` (Nix already
+# produced the deb) and swaps `bfb-add-scout-to-bfb` and
+# `cp-forge-dpu-package-to-bfb` for their `-from-nix` variants
+# below, which read from `${REPO_ROOT}/result/` rather than `target/`
+# and have no cargo dependencies.
+[tasks.internal-bfb-aarch64-from-nix]
+category = "iPXE Kernel"
+description = "BFB assembly using Nix-staged supporting packages"
+workspace = false
+dependencies = [
+  "bfb-cleanup-tmp",
+  "bfb-create-tmp",
+  "bfb-download",
+  "save-bfb-for-preingestion",
+  "bfbtools-download",
+  "bfb-extract",
+  "bfb-extract-efi",
+  "bfb-hbn-pull",
+  "bfb-hbn-export",
+  "bfb-extract-ifconfig",
+  "bfb-add-scout-to-bfb-from-nix",
+  "bfb-add-debs-to-bfb",
+  "bfb-add-nvinit-setup-to-bfb",
+  "bfb-add-dev-forge-root-ca-to-bfb",
+  "mkdir-hbn-folder-in-bfb",
+  "download-hbn-installer-to-bfb",
+  "mv-hbn-configs-to-bfb",
+  "mv-hbn-scripts-to-bfb",
+  "cleanup-hbn-scripts",
+  "cp-forge-dpu-package-to-bfb-from-nix",
   "bfb-copy-efi",
   "bfb-remove-extracted-efi",
   "replace-bfpxe-script",
@@ -1098,6 +1258,14 @@ dependencies = [
   { name = "build-scout-aarch64-release-cross", path = "${REPO_ROOT}" },
 ]
 
+# Nix-staging variant — reads forge-scout from `result/`, no
+# cargo-build dependency.
+[tasks.bfb-add-scout-to-bfb-from-nix]
+category = "iPXE Kernel"
+description = "Add the Nix-built scout to the BFB"
+command = "cp"
+args = ["${REPO_ROOT}/result/forge-scout", "${BUILD_LOCATION}"]
+
 [tasks.download-hbn-installer-to-bfb-sa]
 category = "iPXE Kernel"
 description = "Add the HBN installer to the BFB"
@@ -1176,6 +1344,14 @@ args = [
   "${BUILD_LOCATION}/forge-dpu.deb",
 ]
 
+# Nix-staging variant — reads from `result/` and globs the version.
+[tasks.cp-forge-dpu-package-to-bfb-from-nix]
+category = "iPXE Kernel"
+description = "Copy Nix-built forge-dpu deb into the BFB initramfs staging dir"
+script = '''
+  cp ${REPO_ROOT}/result/forge-dpu_*_arm64.deb ${BUILD_LOCATION}/forge-dpu.deb
+'''
+
 [tasks.setup-apt-repo-arm64]
 category = "iPXE Kernel"
 dependencies = ["mkdir-static"]
@@ -1184,6 +1360,46 @@ script = '''
   cp "${REPO_ROOT}/target/debs/forge-dpu_${PKG_VERSION}_arm64.deb" \
   "${REPO_ROOT}/pxe/static/blobs/internal/apt/pool/base/f/forge-dpu/"
   cp "${REPO_ROOT}/target/debs/forge-scout_${PKG_VERSION}_arm64.deb" \
+  "${REPO_ROOT}/pxe/static/blobs/internal/apt/pool/base/f/forge-scout/"
+
+  cd "${REPO_ROOT}/pxe/static/blobs/internal/apt"
+  dpkg-scanpackages -a arm64 -m pool > dists/focal/main/binary-arm64/Packages
+  cd "${REPO_ROOT}/pxe/static/blobs/internal/apt/dists/focal"
+  echo "Origin: Ubuntu
+Label: Ubuntu
+Suite: focal
+Version: 20.04
+Codename: focal
+Architectures: arm64
+Components: main
+Description: Forge apt repo" > Release
+  echo "Date: `LANG=C date -Ru`" >> Release
+  echo 'SHA256:' >> Release
+  find main -type f | xargs -i sh -c 'printf " "$(sha256sum {} | cut -d " " -f 1)" "$(wc --bytes {} | cut -d " " -f 1)" "{}"\n"' >> Release
+  cd "${REPO_ROOT}/pxe/static/blobs/internal/apt/dists/focal/main/binary-arm64"
+  echo "Archive: focal
+Version: 20.04
+Component: main
+Origin: Ubuntu
+Label: Ubuntu
+Architecture: arm64" > Release
+'''
+
+# Nix-staging variant — reads forge-dpu / forge-scout debs from
+# `${REPO_ROOT}/result/` (the `nix build .#bfb-stage` symlink) and
+# globs the version. dpkg-scanpackages / Release-file generation is
+# identical to `setup-apt-repo-arm64`.
+[tasks.setup-apt-repo-arm64-from-nix]
+category = "iPXE Kernel"
+dependencies = ["mkdir-static"]
+description = "Setup apt repo using Nix-built forge-dpu and forge-scout debs"
+# `install -m 0644` rather than `cp` for the same reason as
+# `ipxe-aarch64-from-nix`: /nix/store files are 0444, plain `cp`
+# preserves that mode, second run can't overwrite.
+script = '''
+  install -m 0644 ${REPO_ROOT}/result/forge-dpu_*_arm64.deb \
+  "${REPO_ROOT}/pxe/static/blobs/internal/apt/pool/base/f/forge-dpu/"
+  install -m 0644 ${REPO_ROOT}/result/forge-scout_*_arm64.deb \
   "${REPO_ROOT}/pxe/static/blobs/internal/apt/pool/base/f/forge-scout/"
 
   cd "${REPO_ROOT}/pxe/static/blobs/internal/apt"
@@ -1240,6 +1456,41 @@ Label: Ubuntu
 Architecture: amd64" > Release
 '''
 
+# Nix-staging variant — reads forge-scout amd64 deb from `result-boot-
+# x86/` (the `nix build .#boot-stage-x86` symlink) and globs the
+# version. dpkg-scanpackages / Release-file generation identical to
+# `setup-apt-repo-amd64`.
+[tasks.setup-apt-repo-amd64-from-nix]
+category = "iPXE Kernel"
+dependencies = ["mkdir-static"]
+description = "Setup apt repo using Nix-built forge-scout amd64 deb"
+script = '''
+  install -m 0644 ${REPO_ROOT}/result-boot-x86/forge-scout_*_amd64.deb \
+  "${REPO_ROOT}/pxe/static/blobs/internal/apt/pool/base/f/forge-scout/"
+
+  cd "${REPO_ROOT}/pxe/static/blobs/internal/apt"
+  dpkg-scanpackages --arch amd64 -m pool > dists/focal/main/binary-amd64/Packages
+  cd "${REPO_ROOT}/pxe/static/blobs/internal/apt/dists/focal"
+  echo "Origin: Ubuntu
+Label: Ubuntu
+Suite: focal
+Version: 20.04
+Codename: focal
+Architectures: amd64
+Components: main
+Description: Forge apt repo" > Release
+  echo "Date: `LANG=C date -Ru`" >> Release
+  echo 'SHA256:' >> Release
+  find main -type f | xargs -i sh -c 'printf " "$(sha256sum {} | cut -d " " -f 1)" "$(wc --bytes {} | cut -d " " -f 1)" "{}"\n"' >> Release
+  cd "${REPO_ROOT}/pxe/static/blobs/internal/apt/dists/focal/main/binary-amd64"
+  echo "Archive: focal
+Version: 20.04
+Component: main
+Origin: Ubuntu
+Label: Ubuntu
+Architecture: amd64" > Release
+'''
+
 
 [tasks.bfb-copy-efi-sa]
 category = "iPXE Kernel"
@@ -1260,7 +1511,11 @@ cwd = "static/blobs/internal/aarch64"
 category = "iPXE Kernel"
 description = "Copy the BFB efi kernel on aarch64 gitlab runner"
 script = '''
-  ${ELEVATE} apt-get -y install file
+  # `file` is part of base on most distros (Arch, Fedora, NixOS), so
+  # only fall back to apt-get when the binary isn't already on PATH.
+  # This lets the task run on non-Debian dev hosts without erroring
+  # on the missing apt frontend.
+  command -v file >/dev/null 2>&1 || ${ELEVATE} apt-get -y install file
   # Check that efi kernel is compressed
   efi_kernel="/tmp/bfb-dump/dump-image-v0"
   if file -b "$efi_kernel" | grep -q 'LZMA compressed data'; then
