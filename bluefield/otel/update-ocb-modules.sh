@@ -5,6 +5,10 @@
 # new component, custom module update). After it completes, commit the updated
 # files in ocb-generated
 #
+# The Nix container build (nix/container/otelcol-contrib-aarch64.nix) vendors
+# from these committed files, so its vendorHash is invalidated by any change
+# here and has to be recomputed — see "Next steps" at the end of this script.
+#
 # Requires: ocb (opentelemetry-collector-builder) on PATH.
 
 set -euo pipefail
@@ -77,3 +81,6 @@ echo ""
 echo "Next steps:"
 echo "  1. git add bluefield/otel/ocb-generated/"
 echo "  2. git commit -m Updating otelcol-contrib to ${VERSION}"
+echo "  3. Set vendorHash = pkgs.lib.fakeHash in nix/container/otelcol-contrib-aarch64.nix"
+echo "  4. nix build .#otelcol-contrib-container-arm64   # fails, printing the real hash"
+echo "  5. Paste the \"got:\" sha256 into vendorHash and rebuild"

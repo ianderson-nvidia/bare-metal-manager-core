@@ -1,3 +1,8 @@
+# Curried function — see nix/rust/crate-binary.nix for the pattern explanation.
+# The outer call (in flake.nix) captures the workspace-wide cross-compile context:
+# pkgs, crane, rustToolchainFor, src, version, and crossPkgs. The result,
+# `mkCrossCrateBinary`, is the inner function called once per binary with just
+# pname, cargoExtraArgs, and extraArgs.
 {
   pkgs,
   crane,
@@ -21,6 +26,7 @@ in
 {
   pname,
   cargoExtraArgs ? "",
+  meta ? {},
   extraArgs ? { },
 }:
 let
@@ -28,7 +34,7 @@ let
 in
 crossCraneLib.buildPackage (
   {
-    inherit src version pname;
+    inherit meta src version pname;
     strictDeps = true;
     doCheck = false;
     doInstallCargoArtifacts = false;
@@ -36,6 +42,8 @@ crossCraneLib.buildPackage (
     cargoExtraArgs = "--package ${pname} ${cargoExtraArgs}";
 
     CARGO_BUILD_TARGET = "aarch64-unknown-linux-gnu";
+    # NVIDIA Grace and some Ampere SKUs run 64KB-page kernels; binaries linked
+    # with the default 4KB segment alignment can load incorrectly on those hosts.
     CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-Wl,-z,max-page-size=0x10000";
 
     # Build scripts compile for and run on the build host, even while the final
@@ -54,11 +62,14 @@ crossCraneLib.buildPackage (
       ])
       ++ extraBuildInputs;
 
-    # Add aarch64 libgcc to the runtime RPATH without leaking it into host
-    # build-script link paths.
-    runtimeDependencies = [
-      crossPkgs.stdenv.cc.cc.lib
-    ];
+    # libgcc_s.so.1 cannot go in buildInputs for cross builds: buildInputs are
+    # visible to host build-script linking, and the aarch64 libgcc_s.so.1 is
+    # incompatible with the x86_64 build-script linker. runtimeDependencies
+    # writes the store path into the final binary's RPATH without exposing it
+    # to the build-script environment. autoPatchelfIgnoreMissingDeps suppresses
+    # the verification failure since autoPatchelf searches libs (buildInputs)
+    # but not runtimeDependencies paths.
+    runtimeDependencies = [ crossPkgs.stdenv.cc.cc.lib ];
     autoPatchelfIgnoreMissingDeps = [ "libgcc_s.so.1" ];
 
     # Native build tools run on the host, not the target.

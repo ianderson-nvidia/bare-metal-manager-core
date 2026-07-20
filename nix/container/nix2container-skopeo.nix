@@ -7,7 +7,8 @@
 }:
 
 let
-  writeNix2containerSkopeoApplication =
+  # Shell application with skopeo (nix: transport) + docker client.
+  writeSkopeoApp =
     name: text:
     pkgs.writeShellApplication {
       inherit name text;
@@ -18,11 +19,12 @@ let
       ];
       excludeShellChecks = [ "SC2068" ];
     };
+
 in
 {
   copyToDockerDaemon =
     image:
-    writeNix2containerSkopeoApplication "copy-to-docker-daemon" ''
+    writeSkopeoApp "copy-to-docker-daemon" ''
       echo "Copy to Docker daemon image ${image.imageName}:${image.imageTag}"
       skopeo --insecure-policy copy nix:${image} docker-daemon:${image.imageName}:${image.imageTag} "$@"
       docker tag "${image.imageName}:${image.imageTag}" "${image.imageName}:latest"
@@ -30,15 +32,16 @@ in
 
   copyToRegistry =
     image:
-    writeNix2containerSkopeoApplication "copy-to-registry" ''
+    writeSkopeoApp "copy-to-registry" ''
       echo "Copy to Docker registry image ${image.imageName}:${image.imageTag}"
       skopeo --insecure-policy copy nix:${image} docker://${image.imageName}:${image.imageTag} "$@"
     '';
 
   copyTo =
     image:
-    writeNix2containerSkopeoApplication "copy-to" ''
+    writeSkopeoApp "copy-to" ''
       echo "Running skopeo --insecure-policy copy nix:${image}" "$@"
       skopeo --insecure-policy copy nix:${image} "$@"
     '';
+
 }
