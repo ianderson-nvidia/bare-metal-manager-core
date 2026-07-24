@@ -88,9 +88,12 @@ let
     exec ${package}/bin/${binaryName} "$@"
   '';
 
-  # preinst creates /nix/store/ on the target before dpkg places files there.
+  # preinst creates /nix/store/ on the target before dpkg unpacks the payload.
   # Targets that have never had a nix-based deb installed won't have /nix at all.
-  preinst = pkgs.writeShellScript "${name}-preinst" ''
+  # Must use #!/bin/sh — pkgs.writeShellScript would embed a Nix-store bash path
+  # that doesn't exist yet when preinst runs (the store is what we're creating).
+  preinst = pkgs.writeText "${name}-preinst" ''
+    #!/bin/sh
     set -e
     mkdir -p /nix/store
     chmod 755 /nix

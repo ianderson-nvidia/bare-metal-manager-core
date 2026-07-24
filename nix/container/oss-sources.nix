@@ -34,8 +34,16 @@ pkgs.runCommand "${name}-oss-sources"
           # Tarball: strip the Nix hash prefix to recover the original filename.
           origname=$(basename "$src")
           filename="''${origname#*-}"
+          if [ -e "$destdir/$filename" ]; then
+            echo "oss-sources: collision on $filename — two packages map to the same filename" >&2
+            exit 1
+          fi
           cp "$src" "$destdir/$filename"
         elif [ -d "$src" ]; then
+          if [ -e "$destdir/${outBase}.tar.gz" ]; then
+            echo "oss-sources: collision on ${outBase}.tar.gz — two packages map to the same archive name" >&2
+            exit 1
+          fi
           tar czf "$destdir/${outBase}.tar.gz" -C "$src" .
         fi
       ''

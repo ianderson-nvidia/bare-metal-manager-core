@@ -1,52 +1,74 @@
 # Deferred work
 
-## BFB assembly: Nix produces inputs, cargo-make assembles
+## otelcol-contrib: commit OCB-generated go.mod/go.sum
 
-Decided 2026-05-11: do not build the BFB in Nix. The signed-bundle
-mlx-mkbfb extract/repack and the NGC-authenticated HBN inputs
-(container, configs, zip) stay in cargo-make. Nix produces only the
-carbide-built *inputs*; cargo-make does the assembly via a parallel
-`-from-nix` task tree.
+The `otelcol-contrib-container-arm64` Nix build requires committed `go.mod` and
+`go.sum` files from a local OCB run. These live at
+`bluefield/otel/ocb-generated/go.mod` and `.../go.sum` and are NOT checked in yet.
 
-Operator workflow (reproducible from a fresh clone):
+Run `bluefield/otel/update-ocb-modules.sh` (requires OCB on PATH):
 
 ```sh
-nix build .#packages.aarch64-linux.bfb-stage
-nix build .#packages.x86_64-linux.ipxe-efi-aarch64 -o result-ipxe-aarch64
-cargo make --cwd pxe build-boot-artifacts-bfb-from-nix
+nix shell nixpkgs#opentelemetry-collector-builder
+bash bluefield/otel/update-ocb-modules.sh
 ```
 
-What Nix produces:
+The script handles version substitution, running OCB, and copying the
+outputs. After it finishes:
 
-- `forge-dpu-package` — composite DPU package artifact (3 Rust binaries
-  + scripts/units/configs). See the current Nix packaging expression.
-- `bfb-stage` — flat `$out` tree: `forge-scout` binary,
-  DPU package artifact, and scout package artifact. See the current Nix
-  staging expression.
-- `ipxe-efi-aarch64` — staged separately under
-  `result-ipxe-aarch64/`; cross-compiled from x86 host because the
-  cross-compile is faster than the SSH+store-copy roundtrip to the
-  aarch64 remote builder.
+```sh
+git add bluefield/otel/ocb-generated/
+# Set vendorHash = pkgs.lib.fakeHash in nix/container/otelcol-contrib-aarch64.nix
+nix build .#otelcol-contrib-container-arm64   # fails with correct hash
+# Paste the "got:" sha256 into vendorHash and rebuild
+```
 
-What cargo-make does (in `build-boot-artifacts-bfb-from-nix`):
-upstream signed BFB download, mlx-mkbfb extract/inject/repack, HBN
-container pull + extract, apt-pool population, final sign/pack. The
-`-from-nix` task variants (`bfb-add-scout-to-bfb-from-nix`,
-`cp-forge-dpu-package-to-bfb-from-nix`,
-`setup-apt-repo-arm64-from-nix`, `ipxe-aarch64-from-nix`) read from
-`${REPO_ROOT}/result/` and `${REPO_ROOT}/result-ipxe-aarch64/`
-instead of `target/...`, and drop the cargo-build dependencies that
-would otherwise rebuild from source.
+**When the OCB config changes** (new component, version bump in
+`otelcol_builder_config_yaml.txt` or `otelcol_version.txt`):
+re-run the script and repeat the steps above.
 
-Open follow-ups:
+---
 
-- **forge-dpu package Phase 3c** — add `otelcol-contrib` (Go via OCB),
-  `node_exporter` (prebuilt), `transceiver-exporter` (Go) plus their
-  systemd units and config fragments to the composite package artifact.
-  Documented inline in the current DPU packaging expression.
-- **SA_ENABLEMENT path** — only the non-SA `internal-bfb-aarch64`
-  was wired to `-from-nix`. Production sign-and-attest flows would
-  need a matching `internal-bfb-aarch64-sa-from-nix`.
+## GitHub Actions: multi-arch container build and push
+
+Multi-arch manifest creation was removed from the Nix flake (was in
+`multiArchApps`). CI should handle it instead using crane/skopeo directly.
+
+Proposed two-job pattern:
+
+**Job 1 — `build` (matrix, `fail-fast: true`)**
+
+One variant per `{service, arch}` pair (flat `include:` list, not a
+cross-product, since not every service has an arm64 variant). Each job:
+
+1. `nix build .#<service>-container[-arm64] -o result-<arch>`
+2. Pushes the single-arch image to the registry with a temporary tag
+   `ghcr.io/nvidia/<service>:${SHA}-amd64` / `...-arm64` using
+   `skopeo-nix2container` (from the nix2container flake input) for the
+   `nix:` transport.
+
+**Job 2 — `push-manifests` (`needs: build`, `if: success()`)**
+
+`needs` on a matrix job blocks until ALL variants complete. If any matrix
+job failed, `if: success()` skips this job entirely. Creates manifest lists:
+
+```
+crane index append \
+  --tag ghcr.io/nvidia/<service>:${SHA} \
+  -m ghcr.io/nvidia/<service>:${SHA}-amd64 \
+  -m ghcr.io/nvidia/<service>:${SHA}-arm64
+```
+
+**Trade-off accepted:** single-arch images are pushed to the registry
+during the matrix phase. They are not referenced by any manifest list
+until job 2 completes, so they are invisible to k8s/docker pull. Registry
+retention policies GC orphaned tags on failure.
+
+**Tooling needed in CI:**
+- `DeterminateSystems/nix-installer-action` for Nix + flakes
+- `docker/login-action` for registry auth before the skopeo push
+- `skopeo-nix2container` via `nix shell github:nlewo/nix2container#skopeo-nix2container`
+- `crane` via `nix shell nixpkgs#crane` or standalone binary
 
 ---
 
@@ -145,51 +167,6 @@ of `nvidia-imex.nix` and `mft.nix` (URL switching), plus the
     --override-input carbide-extras path:/home/$USER/src/.../carbide-extras
   ```
 
-## Distributed builds — multi-builder pool (deferred)
-
-Single aarch64 builder works today (EC2 Graviton). Future: scale to
-multiple builders for parallelism, particularly under CI load.
-
-Setup pattern: `/etc/nix/nix.conf` accepts either inline semicolon-
-separated `builders =` entries or `builders = @/etc/nix/machines`
-referencing a machines file. Machines-file format per line:
-
-```
-ssh-ng://user@host  systems-csv  ssh-key  max-jobs  speed-factor  features-csv
-```
-
-Example x86 + aarch64 mixed pool:
-
-```
-ssh-ng://nix@x86-builder1.internal  x86_64-linux  /etc/nix/build_key 8 1 nixos-test,big-parallel,kvm
-ssh-ng://nix@x86-builder2.internal  x86_64-linux  /etc/nix/build_key 8 1 nixos-test,big-parallel,kvm
-ssh-ng://ubuntu@98.91.24.31         aarch64-linux /etc/nix/aws_key   8 1 nixos-test,big-parallel,kvm
-```
-
-Important properties to remember:
-
-- A single derivation runs on **one** builder — no fan-out within a
-  derivation. The kernel compile won't split across three machines.
-- Parallelism is **across** independent derivations in the dep graph.
-  `nix build .#a .#b .#c` with three builders → up to 3× wall-clock
-  speedup on independent leaves.
-- Each builder has its own `/nix/store`. `builders-use-substitutes =
-  true` lets each builder independently fetch from cache.nixos.org
-  rather than uploading from the local store via SSH.
-- `speed-factor` weights the scheduler — set faster machines higher.
-- For CI runners, each runner has a fresh `/nix/store`. Self-hosted
-  binary cache (attic / S3 / cachix) recovers shared-cache benefits
-  across runners.
-
-When this becomes worth setting up:
-- Multiple developers iterating simultaneously (shared build farm).
-- CI parallelism dominating wall-clock — particularly when each scout-
-  oss / scout-loader / qcow-imager builds independently across arches
-  on each PR.
-- Per-arch CI runner pools where one Graviton instance saturates.
-
-Until then, single-builder-per-arch is fine.
-
 ## Inspection / tooling oddities encountered
 
 - `objcopy` on x86 host can't read aarch64 PE32+ binaries (`file
@@ -249,3 +226,9 @@ Until then, single-builder-per-arch is fine.
   `pxe/ipxe/local/embed.ipxe`. Fixed by adding `embedScript` param
   to both derivations and `EMBED=${embedScript}` to the make line —
   mirrors cargo-make's `ipxe-build-efi-*` tasks.
+- **The Nix admin CLI package uses a stale Cargo package name.**
+  `crates/admin-cli/Cargo.toml` defines `nico-admin-cli`, but the native
+  and aarch64 package sets call the Rust builders with
+  `pname = "carbide-admin-cli"`. Those derivations pass the stale name
+  to `cargo --package` and should be updated while retaining any desired
+  public Nix attribute aliases.

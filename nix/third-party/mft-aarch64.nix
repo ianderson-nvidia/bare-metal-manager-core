@@ -50,15 +50,16 @@ pkgs.stdenv.mkDerivation {
 
     # Patch ELF executables: set interpreter + RPATH.
     # Patch shared objects (.so): set RPATH only (no interpreter).
-    # Skip shell/Python scripts — they run via bash/python3 already on PATH.
+    # Non-ELF files (shell scripts, Python, static archives) are skipped by the
+    # file(1) type check; any patchelf failure on an ELF file is a real error.
     find $out -type f | while IFS= read -r f; do
       type=$(file -b "$f") || continue
       case "$type" in
         *"ELF"*"executable"*)
-          patchelf --set-interpreter "${interp}" --set-rpath "${rpath}" "$f" || true
+          patchelf --set-interpreter "${interp}" --set-rpath "${rpath}" "$f"
           ;;
         *"ELF"*"shared object"*)
-          patchelf --set-rpath "${rpath}" "$f" || true
+          patchelf --set-rpath "${rpath}" "$f"
           ;;
       esac
     done

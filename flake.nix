@@ -186,6 +186,7 @@
         # derivation in `pkgs` will be built for and run on `system`.
         pkgs = import nixpkgs {
           inherit system;
+          config.allowUnfree = true;
           # overlays are a list of functions that patch or extend a package set.
           overlays = [
             rust-overlay.overlays.default

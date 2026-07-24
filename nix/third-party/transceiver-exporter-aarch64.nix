@@ -22,7 +22,7 @@ pkgs.stdenv.mkDerivation {
 
   src = pkgs.fetchurl {
     url = "https://github.com/wobcom/transceiver-exporter/releases/download/v${version}/transceiver-exporter-v${version}-linux-arm64.tar.gz";
-    hash = pkgs.lib.fakeHash;
+    hash = "sha256-uDlML2+DgCnJD7c5BrZf4RAxs26mW3BDhHCW6XrA7RE=";
   };
 
   nativeBuildInputs = [ pkgs.patchelf ];
