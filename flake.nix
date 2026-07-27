@@ -24,6 +24,10 @@
 
     nix run .#carbide-api-container.copyToDockerDaemon
 
+  Generate a CycloneDX SBOM for a container (for nSpect upload):
+
+    nix run .#sbom-carbide-api-container
+
   Enter the dev shell (Rust toolchain + all build tools):
 
     nix develop
@@ -154,10 +158,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    bombon = {
-      url = "github:nikstur/bombon";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
   outputs =
@@ -168,7 +168,6 @@
       flake-utils,
       nix2container,
       rust-overlay,
-      bombon,
     }:
     # eachSystem iterates over an explicit list of systems, evaluating the
     # function for each, and merges the results into the flake outputs attrset.
@@ -547,41 +546,6 @@
             carbide-scout = mk "carbide-scout";
           };
 
-        # passthruVendoredSbom attaches cargo-cyclonedx SBOM data to each binary
-        # derivation's passthru so buildBom can merge Rust crate license metadata
-        # with nixpkgs metadata for the full closure. buildBom alone only sees
-        # what nixpkgs knows — not the crate-level licenses from Cargo.toml.
-        nativeRustBinariesWithSbom = pkgs.lib.mapAttrs (
-          _name: pkg:
-            bombon.lib.${system}.passthruVendoredSbom.rust pkg { inherit pkgs; }
-        ) nativeRustBinaries;
-
-        rustSboms = pkgs.lib.mapAttrs' (
-          name: pkg: pkgs.lib.nameValuePair "${name}-sbom"
-            (bombon.lib.${system}.buildBom pkg { includeBuildtimeDependencies = false; })
-        ) nativeRustBinariesWithSbom;
-
-        # Container SBOMs: one per service image, covering both the carbide
-        # binary (license from cargo metadata via passthruVendoredSbom) and
-        # every runtime package in the container closure (license from nixpkgs
-        # metadata).
-        #
-        # buildBom is called on the Rust binary (sbomPackages[0]) with the
-        # runtime deps as extraPaths — same pattern as the in-container
-        # attribution file. See the attributionSbom comment in mkContainer.
-        containerSboms = pkgs.lib.mapAttrs' (
-          name: container:
-          let
-            pkgs_ = container.passthru.sbomPackages;
-            rt = container.passthru.sbomRuntime;
-          in
-          pkgs.lib.nameValuePair "${name}-sbom"
-            (bombon.lib.${system}.buildBom (builtins.head pkgs_) {
-              includeBuildtimeDependencies = false;
-              extraPaths = pkgs.lib.tail pkgs_ ++ rt ++ [ pkgs.cacert ];
-            })
-        ) containers;
-
         # ====================================================================
         # Go binaries (rest-api workspace)
         # ====================================================================
@@ -597,7 +561,7 @@
         #      verifies the hash, and only then makes it availble for your build.
         # All rest-api binaries share this — they all live under the same
         # go.mod, so vendoring is identical for each.
-        restApiVendorHash = "sha256-Dx8K84zFnDSHs8o82a7IHcPOdePQfJAHNuxt8aXnntE=";
+        restApiVendorHash = "sha256-x4h70HPPtkvuNWpQjKSs65/hJ8jpvxVdzWdgL/mPgIY=";
 
         restApi = import ./nix/go/rest-api.nix {
           inherit pkgs version system;
@@ -635,8 +599,6 @@
             pkgs
             nix2containerLib
             containerCopyHelpers
-            bombon
-            system
             version
             mkOssSources
             ;
@@ -727,10 +689,15 @@
 
         # Per-service containers — one image per binary per architecture.
         #
-        # amd64 containers use nativeRustBinariesWithSbom (bombon SBOM passthru)
-        # and native pkgs runtime tools.
+        # amd64 containers use nativeRustBinaries and native pkgs runtime tools.
         # arm64 containers use aarch64ServerBinaries / aarch64Binaries (cross-
         # compiled) and aarch64CrossPkgs runtime tools.
+        #
+        # Each container bakes in:
+        #   /usr/share/oss-sources/      OSS source tarballs (OSRB compliance)
+        #   /usr/share/carbide/attributions.txt  license notices (OSRB compliance)
+        #
+        # For nSpect SBOM generation run: nix run .#sbom-<name>-container
         #
         # Exposed at:
         #   nix build .#carbide-api-container          # amd64
@@ -750,8 +717,8 @@
                 meta = carbideMeta;
               };
 
-            # amd64 — native binaries with SBOM passthru + native runtime.
-            nativeServices = nativeRustBinariesWithSbom // restApiBinariesNative;
+            # amd64 — native binaries + native runtime.
+            nativeServices = nativeRustBinaries // restApiBinariesNative;
             amd64Containers = pkgs.lib.mapAttrs' (
               name: pkg:
               pkgs.lib.nameValuePair "${name}-container" (mkServiceContainer name pkg pkgs)
@@ -868,8 +835,6 @@
             // restApiBinariesArm64
             // containers
             // debs
-            // rustSboms
-            // containerSboms
             // {
               inherit
                 ipxe-efi-x86
@@ -893,8 +858,6 @@
             // restApiBinariesAmd64
             // restApiBinariesArm64
             // containers
-            // rustSboms
-            // containerSboms
             // {
               inherit
                 ipxe-efi-aarch64
@@ -907,6 +870,9 @@
         # nix: transport is not available on Darwin.
         # Multi-arch manifest creation is handled in CI via crane/skopeo directly.
         apps = pkgs.lib.optionalAttrs isLinux (
+          let
+            amd64Containers = pkgs.lib.filterAttrs (n: _: !(pkgs.lib.hasSuffix "-arm64" n)) containers;
+          in
           # `nix run .#<name>-container-copy-to-docker` loads the amd64 image
           # into the local Docker daemon via the patched skopeo nix: transport.
           pkgs.lib.mapAttrs' (
@@ -915,7 +881,34 @@
               type = "app";
               program = "${container.passthru.copyToDockerDaemon}/bin/copy-to-docker-daemon";
             }
-          ) (pkgs.lib.filterAttrs (n: _: !(pkgs.lib.hasSuffix "-arm64" n)) containers)
+          ) amd64Containers
+          //
+          # `nix run .#sbom-<name>-container` generates a CycloneDX SBOM for
+          # the container using sbomnix, which traverses the container's full
+          # Nix store closure. The SBOM is written to ./<name>-container.cdx.json
+          # in the current directory. Use this output for nSpect uploads.
+          pkgs.lib.mapAttrs' (
+            name: container:
+            pkgs.lib.nameValuePair "sbom-${name}" {
+              type = "app";
+              program = "${pkgs.writeShellApplication {
+                name = "sbom-${name}";
+                runtimeInputs = [ pkgs.sbomnix ];
+                text = ''
+                  echo "Generating SBOM for ${name}..."
+                  sbomnix \
+                    --cdx  "./${name}.cdx.json" \
+                    --spdx "./${name}.spdx.json" \
+                    --csv  "./${name}.csv" \
+                    ${container}
+                  echo "SBOMs written to:"
+                  echo "  ./${name}.cdx.json   (CycloneDX — nSpect, grype)"
+                  echo "  ./${name}.spdx.json  (SPDX — broader toolchain)"
+                  echo "  ./${name}.csv        (human-readable summary)"
+                '';
+              }}/bin/sbom-${name}";
+            }
+          ) amd64Containers
         );
 
         # ==================================================================

@@ -2,8 +2,6 @@
   pkgs,
   nix2containerLib,
   containerCopyHelpers,
-  bombon,
-  system,
   # Default image tag — typically the git revision of the workspace.
   version,
   mkOssSources,
@@ -11,20 +9,20 @@
 
 # Build an OCI container image from a set of Nix packages.
 #
-# Three-phase build:
-#   Phase 1 — assemble base content (binaries + runtime + OSS sources).
-#   Phase 2 — generate a CycloneDX attribution SBOM from the assembled base.
-#   Phase 3 — bake the SBOM into the final image at
-#              /usr/share/carbide/attribution.cdx.json.
+# Two-phase build:
+#   Phase 1 — assemble the container root (binaries + runtime + OSS sources +
+#              attribution notices).
+#   Phase 2 — bake the assembled root into the final OCI image.
 #
-# SBOM generation uses bombon's buildBom called directly on the first element
-# of `packages` (the Rust binary carrying bombonVendoredSbom / cargo-cyclonedx
-# data), with the remaining packages and runtime deps as extraPaths. This is
-# required because nixpkgs' buildEnv excludes `paths` from drvAttrs, so
-# bombon's drvDeps traversal cannot reach the binary through a buildEnv wrapper.
+# OSRB compliance is handled by two artifacts baked into the image:
+#   /usr/share/oss-sources/   — OSS source tarballs (via mkOssSources)
+#   /usr/share/carbide/attributions.txt — notices file listing package name,
+#                                         license, and homepage for all OSS in
+#                                         `runtime` and `packages`.
 #
-# The container also includes OSS source tarballs at /usr/share/oss-sources/
-# (via mkOssSources) to satisfy the OSRB source-availability requirement.
+# A CycloneDX SBOM for nSpect can be generated from the built container via
+# `nix run .#sbom-<name>-container`, which runs sbomnix against the
+# container's full Nix store closure (runtime deps only, no build-time deps).
 {
   name,
   packages,
@@ -89,6 +87,46 @@ let
     '') optCarbideDirs}
   '';
 
+  # OSRB attribution notices file.
+  # Lists every package from `packages`, `runtime`, and `extraContents` that
+  # carries nixpkgs license metadata, satisfying the binary-release notices
+  # requirement. Source tarballs are in /usr/share/oss-sources/ via ossSources.
+  attributionText =
+    let
+      allPkgs = packages ++ runtime ++ extraContents;
+      pkgsWithLicense = builtins.filter (p: p ? meta && p.meta ? license) allPkgs;
+    in
+    pkgs.runCommand "${name}-attribution" { } ''
+      mkdir -p $out/usr/share/carbide
+      {
+        printf "Third Party Notices — %s\n" "${name}"
+        printf "Source code is available in /usr/share/oss-sources/\n"
+        printf "\n"
+        ${pkgs.lib.concatMapStrings (
+          p:
+          let
+            lics =
+              if builtins.isList p.meta.license then p.meta.license else [ p.meta.license ];
+            pname_ = p.pname or p.name or "unknown";
+            ver = p.version or "";
+          in
+          pkgs.lib.concatMapStrings (
+            lic: ''
+              printf "%s\n" "${pname_}${pkgs.lib.optionalString (ver != "") " ${ver}"}"
+              printf "  License: %s\n" "${lic.fullName or lic.spdxId or "Unknown"}"
+              ${pkgs.lib.optionalString (lic ? url && builtins.isString lic.url) ''
+                printf "  License URL: %s\n" "${lic.url}"
+              ''}
+              ${pkgs.lib.optionalString (p.meta ? homepage && builtins.isString p.meta.homepage) ''
+                printf "  Homepage: %s\n" "${p.meta.homepage}"
+              ''}
+              printf "\n"
+            ''
+          ) lics
+        ) pkgsWithLicense}
+      } > $out/usr/share/carbide/attributions.txt
+    '';
+
   pathsToLink = [
     "/bin"
     "/sbin"
@@ -111,57 +149,21 @@ let
     // pkgs.lib.optionalAttrs (entrypoint != null) { Entrypoint = entrypoint; }
     // pkgs.lib.optionalAttrs (cmd != null) { Cmd = cmd; };
 
-  basePaths =
-    packages
-    ++ runtime
-    ++ [ pkgs.cacert ossSources optCarbideCompat ]
-    ++ extraContents
-    ++ extraCommandsPath;
-
-  # Phase 1: base content without the attribution file.
-  preAttributionRoot = pkgs.buildEnv {
-    name = "${name}-container-root-pre";
-    paths = basePaths;
-    inherit pathsToLink;
-  };
-
-  preAttributionImage = nix2containerLib.buildImage {
-    name = "${name}-pre-attribution";
-    inherit tag arch;
-    maxLayers = 100;
-    copyToRoot = preAttributionRoot;
-    config = imageConfig;
-  };
-
-  # Phase 2: CycloneDX attribution SBOM.
-  # buildBom must target the derivation that carries bombonVendoredSbom —
-  # wrapping it in buildEnv or a nix2container image hides it from bombon's
-  # drvAttrs traversal. Runtime packages reach the SBOM via extraPaths →
-  # closureInfo, which the bombon transformer maps to nixpkgs license metadata.
-  attributionSbom = bombon.lib.${system}.buildBom (builtins.head packages) {
-    includeBuildtimeDependencies = false;
-    extraPaths =
-      pkgs.lib.tail packages
-      ++ runtime
-      ++ [ pkgs.cacert ]
-      ++ extraContents
-      ++ extraCommandsPath;
-  };
-
-  attributionPath = pkgs.runCommand "${name}-attribution-path" { } ''
-    mkdir -p $out/usr/share/carbide
-    cp ${attributionSbom} $out/usr/share/carbide/attribution.cdx.json
-  '';
-
-  # Phase 3: final image with attribution baked in.
-  # maxLayers = 100 gives nix2container room to split the closure into
-  # fine-grained layers for better registry cache reuse.
+  # Phase 1: assemble the full container root.
   root = pkgs.buildEnv {
     name = "${name}-container-root";
-    paths = basePaths ++ [ attributionPath ];
+    paths =
+      packages
+      ++ runtime
+      ++ [ pkgs.cacert ossSources optCarbideCompat attributionText ]
+      ++ extraContents
+      ++ extraCommandsPath;
     inherit pathsToLink;
   };
 
+  # Phase 2: bake into an OCI image.
+  # maxLayers = 100 gives nix2container room to split the closure into
+  # fine-grained layers for better registry cache reuse.
   rawImage = nix2containerLib.buildImage {
     inherit name tag arch;
     maxLayers = 100;
@@ -182,10 +184,6 @@ let
         copyToDockerDaemon = containerCopyHelpers.copyToDockerDaemon rawImage;
         copyToRegistry = containerCopyHelpers.copyToRegistry rawImage;
         copyTo = containerCopyHelpers.copyTo rawImage;
-        # Expose packages and runtime so containerSboms can call buildBom
-        # with the same drv/extraPaths split used for the attribution file.
-        sbomPackages = packages;
-        sbomRuntime = runtime;
       };
   });
 in
