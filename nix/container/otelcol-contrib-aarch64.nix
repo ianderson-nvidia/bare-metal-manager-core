@@ -132,7 +132,7 @@ in
   src = ocbSource;
   modRoot = "ocb-build";
 
-  vendorHash = "sha256-V6U/8Lk7Lzu6JIOF20rVqqyFix4QlViWstJvgu3x/YQ=";
+  vendorHash = "sha256-m1YQJpy4Q67A6nXIYermk9TG7BnA3OmhLVJ56RRNUvI=";
 
   # journaldreceiver links against libsystemd via CGO.
   buildInputs = [ crossPkgs.systemd.dev ];

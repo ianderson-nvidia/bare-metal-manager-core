@@ -17,10 +17,16 @@
 #     in by the caller (flake.nix) so the relative-path arithmetic
 #     stays in one place.
 #
+# Patches applied:
+#   - 0001-efi-Add-TPM-measurement-API (TPM measured boot via TCG v1/v2)
+#   - 0001-fix-update-to-allow-iPXE-to-boot-on-BlueField-NICs (BlueField NIC support)
+#   - 0003-efi-prevent-load-image-watchdog-timeout (EFI watchdog fix)
+#
 # Replaces these cargo-make tasks:
 #   - ipxe-config (copying headers)
-#   - ipxe-patch-measured-boot
-#   - ipxe-patch-watchdog-timeout
+#   - ipxe-patch-measured-boot (TPM measurement patch)
+#   - ipxe-patch-mlnx (BlueField NIC patch)
+#   - ipxe-patch-watchdog-timeout (EFI watchdog patch)
 #   - ipxe-build-efi-x86_64
 #   - ipxe-install-efi-x86_64
 # ==============================================================================
@@ -99,8 +105,14 @@ pkgs.gcc13Stdenv.mkDerivation {
     # Mirror the cargo-make build: produce snponly.efi (generic) and
     # golan.efi (Mellanox-specific). The VERSION= argument shows up
     # in the iPXE startup banner.
+    #
+    # DEBUG=tls enables iPXE's TLS-layer debug logging. It must match the
+    # cargo-make build (pxe/Makefile.toml, ipxe-build-efi-x86_64) — without
+    # it the binaries differ from what ships today and TLS failures during
+    # PXE boot become undiagnosable in the field.
     make -j$NIX_BUILD_CORES \
       EMBED=${embedScript} \
+      DEBUG=tls \
       bin-x86_64-efi/snponly.efi \
       bin-x86_64-efi/golan.efi \
       VERSION=${bannerVersion}

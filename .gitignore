@@ -79,3 +79,7 @@ dev/certs/pub/
 *.spdx.json
 *-container.csv
 http_cache.sqlite
+
+# nix build result symlinks
+result
+result-*

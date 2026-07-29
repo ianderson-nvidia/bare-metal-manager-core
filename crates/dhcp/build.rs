@@ -58,6 +58,17 @@ fn main() {
     println!("cargo:rerun-if-changed=src/kea/carbide_logger.cc");
     println!("cargo:rerun-if-changed=src/kea/carbide_logger.h");
 
+    // Cargo caches this script's output, including the include path baked into
+    // the compiled shim above and the link search path emitted below. Without
+    // these directives, pointing KEA_INCLUDE_PATH or KEA_LIB_PATH at a
+    // different Kea does not invalidate that cache — the crate silently keeps
+    // building against the previous location and fails at link time with an
+    // opaque "unable to find library" error. This is easy to hit whenever the
+    // two paths differ between environments (e.g. a package build versus a
+    // development shell).
+    println!("cargo:rerun-if-env-changed=KEA_INCLUDE_PATH");
+    println!("cargo:rerun-if-env-changed=KEA_LIB_PATH");
+
     println!("cargo:rustc-link-search={kea_lib_path}");
     println!("cargo:rustc-link-lib=keashim");
     println!("cargo:rustc-link-lib=stdc++");

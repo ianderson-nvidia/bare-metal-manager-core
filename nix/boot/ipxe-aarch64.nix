@@ -13,11 +13,16 @@
 # nativeBuildInputs (perl, xz) come from pkgs (x86_64) because they're
 # host tools; nothing in buildInputs because iPXE is freestanding.
 #
+# Patches applied (same set as ipxe-x86.nix):
+#   - 0001-efi-Add-TPM-measurement-API (TPM measured boot via TCG v1/v2)
+#   - 0001-fix-update-to-allow-iPXE-to-boot-on-BlueField-NICs (BlueField NIC support)
+#   - 0003-efi-prevent-load-image-watchdog-timeout (EFI watchdog fix)
+#
 # Replaces these cargo-make tasks:
 #   - ipxe-config (copying headers)
-#   - ipxe-patch-mlnx (Mellanox BlueField NIC support)
-#   - ipxe-patch-grace-grace (Supermicro Grace/Grace servers)
-#   - ipxe-patch-efi-rng (ARM EFI RNG retry)
+#   - ipxe-patch-mlnx (BlueField NIC patch)
+#   - ipxe-patch-measured-boot (TPM measurement patch)
+#   - ipxe-patch-watchdog-timeout (EFI watchdog patch)
 #   - ipxe-build-efi-aarch64
 #   - ipxe-install-efi-aarch64
 # ==============================================================================
@@ -104,10 +109,17 @@ crossStdenv.mkDerivation {
     # HOST_CC explicitly points at the x86_64 gcc for build-time tools
     # (elf2efi64, etc.) — without this, iPXE's makefile would invoke
     # plain `gcc`, which the cross-stdenv sandbox doesn't expose.
+    #
+    # DEBUG=snp,tls enables iPXE debug logging for the Simple Network
+    # Protocol and TLS layers. It must match the cargo-make build
+    # (pxe/Makefile.toml, ipxe-build-efi-aarch64) — without it the binaries
+    # differ from what ships today and SNP/TLS failures during PXE boot
+    # become undiagnosable in the field.
     make -j$NIX_BUILD_CORES \
       CROSS_COMPILE=${crossStdenv.cc.targetPrefix} \
       HOST_CC=${pkgs.gcc13}/bin/gcc \
       EMBED=${embedScript} \
+      DEBUG=snp,tls \
       bin-arm64-efi/ipxe.efi \
       bin-arm64-efi/golan.efi \
       VERSION=${bannerVersion}

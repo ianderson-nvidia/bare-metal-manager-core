@@ -1,0 +1,248 @@
+# Nix builds and lints.
+#
+#   just              list every recipe
+#   just list         list every target the flake exposes
+#   just container carbide-api
+#   just lint-ci      the full lint suite
+#
+# Recipes that produce artifacts other tasks consume leave them behind a
+# `result-*` symlink at the repo root. Those names are read literally by the
+# staging tasks in pxe/Makefile.toml, so renaming one means renaming both.
+#
+# Nix supplies every toolchain these recipes need, including the pinned
+# nightly used for rustfmt and the carbide-lints rustc driver. Nothing here
+# depends on the build containers in dev/docker/, and nothing needs rustup.
+
+# Run a command in the dev shell, unless we are already inside one. Recipes
+# use this rather than assuming the caller ran `nix develop` first, so that
+# `just lint-ci` works from a bare shell and does not pay for a nested shell
+# when it doesn't have to.
+dev := if env_var_or_default("IN_NIX_SHELL", "") == "" { "nix develop --command" } else { "" }
+
+# Show the available recipes.
+default:
+    @just --list --unsorted
+
+# Fail with install instructions if the nix CLI is unavailable.
+[private]
+_check-nix:
+    #!/usr/bin/env bash
+    command -v nix >/dev/null 2>&1 || {
+        echo "error: nix not found on PATH."
+        echo
+        echo "Install with the Determinate Systems installer, which enables flakes"
+        echo "and the FlakeHub binary cache out of the box:"
+        echo "  curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install"
+        exit 1
+    }
+
+# List every Nix build target (containers, debs, binaries, iPXE).
+list: _check-nix
+    nix flake show
+
+# ==============================================================================
+# Containers
+# ==============================================================================
+
+# Build one amd64 service container, e.g. `just container carbide-api`.
+container service: _check-nix
+    nix build ".#{{ service }}-container" -o "result-{{ service }}-container"
+    @echo "Built: result-{{ service }}-container"
+
+# Build one arm64 service container, e.g. `just container-arm64 forge-dpu-agent`.
+container-arm64 service: _check-nix
+    nix build ".#{{ service }}-container-arm64" -o "result-{{ service }}-container-arm64"
+    @echo "Built: result-{{ service }}-container-arm64"
+
+# Build an amd64 service container and load it into the local Docker daemon.
+container-load service: _check-nix
+    nix run ".#{{ service }}-container-copy-to-docker"
+
+# Build every amd64 carbide service container.
+containers-carbide: _check-nix
+    nix build --no-link --print-out-paths \
+      .#carbide-api-container \
+      .#carbide-bmc-proxy-container \
+      .#carbide-dhcp-container \
+      .#carbide-dns-container \
+      .#carbide-dsx-exchange-consumer-container \
+      .#carbide-health-container \
+      .#carbide-log-parser-container \
+      .#carbide-pxe-container \
+      .#carbide-scout-container \
+      .#carbide-ssh-console-container \
+      .#nico-admin-cli-container
+
+# Build every arm64 carbide service container (cross-compiled).
+containers-carbide-arm64: _check-nix
+    nix build --no-link --print-out-paths \
+      .#carbide-api-container-arm64 \
+      .#carbide-dhcp-container-arm64 \
+      .#carbide-dns-container-arm64 \
+      .#carbide-dsx-exchange-consumer-container-arm64 \
+      .#carbide-health-container-arm64 \
+      .#carbide-pxe-container-arm64 \
+      .#carbide-scout-container-arm64 \
+      .#carbide-ssh-console-container-arm64 \
+      .#nico-admin-cli-container-arm64
+
+# Build every DPU-side arm64 container (cross-compiled from x86).
+containers-dpu: _check-nix
+    nix build --no-link --print-out-paths \
+      .#carbide-fmds-container-arm64 \
+      .#forge-dhcp-server-container-arm64 \
+      .#forge-dpu-agent-container-arm64 \
+      .#otelcol-contrib-container-arm64 \
+      .#transceiver-exporter-container-arm64
+
+# Build every amd64 rest-api service container.
+containers-rest-api: _check-nix
+    nix build --no-link --print-out-paths \
+      .#rest-api-api-container \
+      .#rest-api-credsmgr-container \
+      .#rest-api-flow-container \
+      .#rest-api-mcp-container \
+      .#rest-api-migrations-container \
+      .#rest-api-nicocli-container \
+      .#rest-api-nsm-container \
+      .#rest-api-psm-container \
+      .#rest-api-site-agent-container \
+      .#rest-api-sitemgr-container \
+      .#rest-api-workflow-container
+
+# Build every arm64 rest-api service container (cross-compiled).
+containers-rest-api-arm64: _check-nix
+    nix build --no-link --print-out-paths \
+      .#rest-api-api-container-arm64 \
+      .#rest-api-credsmgr-container-arm64 \
+      .#rest-api-flow-container-arm64 \
+      .#rest-api-mcp-container-arm64 \
+      .#rest-api-migrations-container-arm64 \
+      .#rest-api-nicocli-container-arm64 \
+      .#rest-api-nsm-container-arm64 \
+      .#rest-api-psm-container-arm64 \
+      .#rest-api-site-agent-container-arm64 \
+      .#rest-api-sitemgr-container-arm64 \
+      .#rest-api-workflow-container-arm64
+
+# Build the hardware-simulation and machine-validation containers.
+containers-validation: _check-nix
+    nix build --no-link --print-out-paths \
+      .#machine-a-tron-container \
+      .#machine-validation-config-container \
+      .#machine-validation-config-container-arm64 \
+      .#machine-validation-runner-container
+
+# ==============================================================================
+# Boot artifacts and packages
+# ==============================================================================
+
+# Build the forge-scout Debian packages for amd64 and arm64.
+deb-scout: _check-nix
+    nix build .#forge-scout-deb       -o result-forge-scout-deb-amd64
+    nix build .#forge-scout-deb-arm64 -o result-forge-scout-deb-arm64
+    @echo "Built:"
+    @echo "  result-forge-scout-deb-amd64/"
+    @echo "  result-forge-scout-deb-arm64/"
+
+# Build the iPXE EFI bootloaders for x86_64 and aarch64.
+ipxe: _check-nix
+    nix build .#ipxe-efi-x86     -o result-ipxe-efi-x86
+    nix build .#ipxe-efi-aarch64 -o result-ipxe-efi-aarch64
+    @echo "Built:"
+    @echo "  result-ipxe-efi-x86/"
+    @echo "  result-ipxe-efi-aarch64/"
+
+# Assembling a PXE boot image or a BFB takes two steps. This recipe is step
+# one: it compiles the pieces and leaves each behind a `result-*` symlink.
+# Step two copies them into the static webroot and assembles the image:
+#
+#   just boot-inputs
+#   cargo make --cwd pxe build-boot-artifacts-x86-host-from-nix
+#
+# Build every PXE boot input: iPXE bootloaders, scout .debs, aarch64 scout.
+boot-inputs: _check-nix ipxe deb-scout
+    nix build .#carbide-scout-aarch64 -o result-carbide-scout-aarch64
+    @echo "Built:"
+    @echo "  result-ipxe-efi-x86/          result-ipxe-efi-aarch64/"
+    @echo "  result-forge-scout-deb-amd64/ result-forge-scout-deb-arm64/"
+    @echo "  result-carbide-scout-aarch64/"
+
+# ==============================================================================
+# Compliance
+# ==============================================================================
+
+# Generate CycloneDX/SPDX/CSV SBOMs for a container, for nSpect upload.
+sbom service: _check-nix
+    nix run ".#sbom-{{ service }}-container"
+
+# ==============================================================================
+# Lints and tests
+#
+# `lint-ci` is the whole suite, in the order the lint-police CI job runs it.
+# taplo is deliberately absent: CI runs it advisorily (`taplo fmt --check ||
+# echo ...`), so making it a hard dependency here would be stricter than the
+# behaviour this replaces.
+# ==============================================================================
+
+# Run the full lint suite. Mirrors the lint-police CI job.
+lint-ci: clippy carbide-lints lint-error-messages check-format check-workspace-deps check-event-names check-metric-docs check-licenses check-bans
+
+# Run the clippy code linter.
+clippy: _check-nix
+    {{ dev }} cargo clippy --locked --all-targets --all-features
+
+# Run the custom lints defined in lints/carbide-lints.
+carbide-lints: _setup-carbide-lints
+    # The driver links against librustc_driver from the nightly toolchain and
+    # has to find it at run time. rustup normally handles this with a shim; the
+    # dev shell has no rustup, so point the loader at the nightly lib dir.
+    #
+    # No --all-features: it enables `test_support`, which disables the
+    # txn_held_across_await lint. No --all-targets: test targets are not linted.
+    {{ dev }} bash -c 'export LD_LIBRARY_PATH="$(dirname "$(dirname "$CARGO_NIGHTLY")")/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; cargo carbide-lints'
+
+# Build and install the `cargo carbide-lints` subcommand.
+[private]
+_setup-carbide-lints: _check-nix
+    # carbide-lints is a rustc driver, so nightly rustc must compile it. cargo
+    # resolves rustc from PATH and the dev shell puts the stable toolchain
+    # first — which has no rustc-dev, so the rustc_* imports fail to resolve.
+    # RUSTC_WRAPPER is cleared because sccache cannot handle rustc-private.
+    {{ dev }} bash -c 'cd lints/carbide-lints && RUSTC="$(dirname "$CARGO_NIGHTLY")/rustc" RUSTC_WRAPPER= "$CARGO_NIGHTLY" install --path .'
+
+# Check that error messages follow C-GOOD-ERR (lowercase, no trailing period).
+lint-error-messages: _check-nix
+    @{{ dev }} cargo --quiet xtask lint-error-messages || (RC=$?; echo 'To fix automatically, run `cargo xtask lint-error-messages --fix`'; exit $RC)
+
+# Check formatting. RUSTFMT points at the pinned nightly, which sorts imports.
+check-format: _check-nix
+    {{ dev }} cargo fmt --all -- --check
+
+# Reformat with the pinned nightly rustfmt.
+format: _check-nix
+    {{ dev }} cargo fmt --all
+
+# Check for dependency versions declared in crates instead of the workspace root.
+check-workspace-deps: _check-nix
+    @{{ dev }} cargo --quiet xtask check-workspace-deps || (RC=$?; echo 'To fix automatically, run `cargo xtask check-workspace-deps --fix`'; exit $RC)
+
+# Check that production instrumented Events have unique event_name identities.
+check-event-names: _check-nix
+    {{ dev }} cargo --quiet xtask check-event-names
+
+# Fail if a #[derive(Event)] counter/histogram has no row in docs/observability/core_metrics.md.
+check-metric-docs: _check-nix
+    @{{ dev }} cargo --quiet xtask check-metric-docs || (RC=$?; echo 'To fix automatically, run `cargo xtask check-metric-docs --fix`'; exit $RC)
+
+# Check cargo-deny for licenses we have not already accepted.
+check-licenses: _check-nix
+    {{ dev }} cargo deny check licenses
+
+# Check cargo-deny for crates on the ban list.
+check-bans: _check-nix
+    {{ dev }} cargo deny check bans
+
+# Run the release-container service tests against an ephemeral postgres.
+test-postgres: _check-nix
+    {{ dev }} ./scripts/with-postgres.sh cargo make test-release-container-services

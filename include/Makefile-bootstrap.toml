@@ -181,13 +181,3 @@ echo "In case you don't want to delete instance for further testing, call script
 ${REPO_ROOT}/dev/bin/instance_handling.sh test ${API_SERVER_HOST} ${API_SERVER_PORT}
 '''
 cwd = "${REPO_ROOT}"
-
-[tasks.test-instance-forge-kube]
-workspace = false
-script = '''
-#!/usr/bin/env bash
-
-source ${REPO_ROOT}/dev/kube-env/envrc
-echo "In case you don't want to delete instance for further testing, call script 'dev/bin/instance_handling.sh create' and 'dev/bin/instance_handling.sh delete'"
-${REPO_ROOT}/dev/bin/instance_handling.sh test ${API_SERVER_HOST} ${API_SERVER_PORT}
-'''

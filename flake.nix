@@ -20,9 +20,13 @@
     nix build .#forge-scout-deb                # .deb package (x86_64)
     nix build .#ipxe-efi-x86                   # iPXE EFI bootloader
 
+  List every runnable target (`nix run`), defined under nix/apps/:
+
+    nix flake show
+
   Load a container into the local Docker daemon:
 
-    nix run .#carbide-api-container.copyToDockerDaemon
+    nix run .#carbide-api-container-copy-to-docker
 
   Generate a CycloneDX SBOM for a container (for nSpect upload):
 
@@ -31,6 +35,16 @@
   Enter the dev shell (Rust toolchain + all build tools):
 
     nix develop
+
+  WHERE TO MAKE CHANGES
+
+    nix/services/default.nix   what goes into a service's container image —
+                               runtime tools, entrypoint, directory fixups
+    nix/container/             the container builder, and images assembled
+                               from staged files rather than a binary
+    nix/rust/, nix/go/         how binaries are compiled
+    nix/deb/, nix/boot/        .deb packages and iPXE bootloaders
+    nix/apps/                  `nix run` targets
 
   Nix language quick reference
   Full docs: https://nix.dev/tutorials/nix-language
@@ -198,9 +212,36 @@
         # derivation so it can splice the toolchain through build/host/target
         # package sets correctly when cross-compiling.
         # https://github.com/oxalica/rust-overlay
+        # Read the channel from rust-toolchain.toml rather than hardcoding it.
+        # cargo-make, the Dockerfiles, and rustup all honour that file, so
+        # duplicating the version here lets the flake silently drift onto a
+        # different rustc than the one that produces the shipping binaries —
+        # which it had (flake 1.95.0 vs rust-toolchain.toml 1.96.0).
+        rustChannel = (builtins.fromTOML (builtins.readFile ./rust-toolchain.toml)).toolchain.channel;
+
+        # Nightly is needed only for rustfmt: rustfmt.toml sets
+        # unstable_features plus imports_granularity / group_imports /
+        # format_code_in_doc_comments / normalize_doc_attributes, none of which
+        # stable rustfmt accepts. Keep in sync with RUST_NIGHTLY in Makefile.toml.
+        rustNightlyDate = "2026-06-16";
+
+        # Components mirror what setup-nightly-rust installs via rustup:
+        # rustfmt for the format checks, and rust-src/rustc-dev/llvm-tools for
+        # carbide-lints, which is a rustc driver and links against rustc
+        # internals. Supplying this from Nix means the lint tasks work under
+        # `nix develop` without rustup — the Nix cargo rejects `+toolchain`.
+        rustNightlyToolchain = pkgs.rust-bin.nightly.${rustNightlyDate}.default.override {
+          extensions = [
+            "rustfmt"
+            "rust-src"
+            "rustc-dev"
+            "llvm-tools-preview"
+          ];
+        };
+
         rustToolchainFor =
           p:
-          p.rust-bin.stable."1.95.0".default.override {
+          p.rust-bin.stable.${rustChannel}.default.override {
             extensions = [
               "rust-src"
               "rust-analyzer"
@@ -227,34 +268,6 @@
           inherit pkgs;
           skopeoNix2container = nix2container.packages.${system}.skopeo-nix2container;
         };
-
-        # ====================================================================
-        # Version assertions for packages with ABI-sensitive runtime coupling.
-        #
-        # libdhcp.so (the Kea hook) is compiled against libkea-*.so with
-        # ABI-versioned SONAME entries. A Kea major version bump changes those
-        # SONAMEs, breaking hook loading at runtime with an opaque dlopen error.
-        # The assertion catches this during `nix flake update` before it ships.
-        # To accept a new version: verify hook compatibility, then update the
-        # expected string below.
-        # ====================================================================
-        _keaVersionCheck = assert pkgs.kea.version == "3.2.0"
-          || builtins.throw ''
-              kea version changed to ${pkgs.kea.version}.
-              libdhcp.so links against libkea-*.so — verify hook ABI compatibility
-              before accepting. Then update the assertion in flake.nix.
-            '';
-          true;
-
-        # libudev-zero is a drop-in libudev replacement linked into every Rust
-        # binary via allBuildInputs. The ABI is stable by design, but a version
-        # bump warrants a quick sanity check before accepting.
-        _libudevVersionCheck = assert pkgs.libudev-zero.version == "1.0.4"
-          || builtins.throw ''
-              libudev-zero version changed to ${pkgs.libudev-zero.version}.
-              Verify ABI compatibility, then update the assertion in flake.nix.
-            '';
-          true;
 
         # ====================================================================
         # System dependencies
@@ -285,7 +298,16 @@
         # compiles every external crate including -sys crates whose build.rs
         # calls pkg-config for "their" library. Missing any one library
         # fails the deps phase even if no individual binary needs it.
+        #
+        # Version assertion: libudev-zero is a drop-in libudev replacement
+        # linked into every Rust binary. A version bump warrants a sanity
+        # check before accepting. Update the string below after verifying.
         allBuildInputs =
+          assert pkgs.libudev-zero.version == "1.0.3"
+            || builtins.throw ''
+                libudev-zero version changed to ${pkgs.libudev-zero.version}.
+                Verify ABI compatibility, then update the assertion in flake.nix.
+              '';
           (with pkgs; [
             libudev-zero
           ])
@@ -314,8 +336,16 @@
           root = ./.; 
           # https://noogle.dev/f/lib/fileset/unions/
           fileset = pkgs.lib.fileset.unions [
-            # https://crane.dev/API.html?highlight=commoncargoS#cranelibfilesetcommoncargosources
-            (craneLib.fileset.commonCargoSources ./.)
+            # Deliberately not craneLib.fileset.commonCargoSources: that is
+            # cargoTomlAndLock ∪ rust ∪ toml, and its `toml` component matches
+            # *every* .toml in the tree. At the repo root that pulls in
+            # Makefile.toml, clippy.toml, deny.toml, Cross.toml and .taplo.toml
+            # — none of which cargo reads during a build, but all of which would
+            # then invalidate every binary and container on a cargo-make edit.
+            # https://crane.dev/API.html#cranelibfilesetcargotomlandlock
+            (craneLib.fileset.cargoTomlAndLock ./.)
+            # https://crane.dev/API.html#cranelibfilesetrust
+            (craneLib.fileset.rust ./.)
             ./crates
             # Non-Rust files outside crates/ referenced at build/test time.
             ./.cargo
@@ -323,6 +353,10 @@
             # include_str!("").
             ./pxe/templates
             ./pxe/ipxe/local
+            # bmc-mock embeds the ipmi_sim fixtures with include_bytes!, and it
+            # is a regular dependency of machine-a-tron rather than a dev-only
+            # one, so these are needed for a release build and not just tests.
+            ./dev/ipmi
           ];
         };
 
@@ -452,27 +486,47 @@
           crossPkgs = aarch64CrossPkgs;
         };
 
-        # libkea ships its C++ library as libkea-dhcp.so.* (versioned), but the
-        # linker resolves -lkea-dhcp++ by name. postConfigure symlinks it into a
-        # stable tmpdir so both native and cross builds find it at the same path.
-        dhcpCrateExtraArgs = dhcpPkgs: {
+        # libkea ships its C++ library as libkea-dhcp.so.* (versioned), but
+        # crates/dhcp/build.rs emits `cargo:rustc-link-lib=kea-dhcp++`, so the
+        # linker looks for libkea-dhcp++.so — a name Kea does not provide.
+        # This shim is a lib dir carrying that alias.
+        #
+        # Both the package builds and the dev shell point KEA_LIB_PATH here.
+        # They used to diverge (the builds did this inline in postConfigure, the
+        # dev shell pointed straight at ${kea}/lib), which meant carbide-dhcp
+        # could not be built inside `nix develop` at all.
+        mkKeaLibShim =
+          p:
+          pkgs.runCommand "kea-lib-shim-${p.kea.version}" { } ''
+            mkdir -p $out/lib
+            ln -sf ${p.kea}/lib/libkea-*.so* $out/lib/
+            ln -sf ${p.kea}/lib/libkea-dhcp.so $out/lib/libkea-dhcp++.so
+          '';
+
+        #
+        # Version assertion: libdhcp.so links against libkea-*.so with
+        # ABI-versioned SONAMEs. A Kea major version bump changes those SONAMEs,
+        # breaking hook loading at runtime with an opaque dlopen error. Update
+        # the string below after verifying hook ABI compatibility.
+        dhcpCrateExtraArgs = dhcpPkgs:
+          assert dhcpPkgs.kea.version == "3.0.3"
+            || builtins.throw ''
+                kea version changed to ${dhcpPkgs.kea.version}.
+                libdhcp.so links against libkea-*.so — verify hook ABI compatibility
+                before accepting. Then update the assertion in flake.nix.
+              '';
+          {
           buildInputs = with dhcpPkgs; [
             stdenv.cc.cc.lib
             kea
             boost.dev
           ];
-          postConfigure = ''
-            mkdir -p $TMPDIR/kea-lib
-            ln -sf ${dhcpPkgs.kea}/lib/libkea-*.so* $TMPDIR/kea-lib
-            ln -sf ${dhcpPkgs.kea}/lib/libkea-dhcp.so $TMPDIR/kea-lib/libkea-dhcp++.so
-            export KEA_LIB_PATH="$TMPDIR/kea-lib"
-          '';
           KEA_INCLUDE_PATH = "${dhcpPkgs.kea}/include/kea";
-          KEA_LIB_PATH = "${dhcpPkgs.kea}/lib";
+          KEA_LIB_PATH = "${mkKeaLibShim dhcpPkgs}/lib";
         };
 
         # Shared metadata applied to every carbide workspace binary.
-        # bombon reads meta.license and meta.homepage to populate
+        # sbomnix reads meta.license and meta.homepage to populate
         # the licenseDeclared / downloadLocation fields in generated SBOMs.
         carbideMeta = {
           license = pkgs.lib.licenses.asl20;
@@ -500,7 +554,7 @@
             extraArgs = dhcpCrateExtraArgs pkgs;
           };
           carbide-dsx-exchange-consumer = mkCrateBinary { pname = "carbide-dsx-exchange-consumer"; meta = carbideMeta; };
-          carbide-admin-cli = mkCrateBinary { pname = "carbide-admin-cli"; meta = carbideMeta; };
+          nico-admin-cli = mkCrateBinary { pname = "nico-admin-cli"; meta = carbideMeta; };
           carbide-health = mkCrateBinary { pname = "carbide-health"; meta = carbideMeta; };
           carbide-ssh-console = mkCrateBinary { pname = "carbide-ssh-console"; meta = carbideMeta; };
           # carbide-scout produces a binary named "forge-scout" (per the crate's
@@ -508,6 +562,10 @@
           carbide-scout = mkCrateBinary { pname = "carbide-scout"; meta = carbideMeta; };
           carbide-log-parser = mkCrateBinary { pname = "carbide-log-parser"; meta = carbideMeta; };
           carbide-bmc-proxy = mkCrateBinary { pname = "carbide-bmc-proxy"; meta = carbideMeta; };
+          # Hardware simulation tool. x86_64 only — the Dockerfile it replaces
+          # hardcoded --target x86_64-unknown-linux-gnu and a linux/amd64 runtime
+          # stage, so there is deliberately no aarch64ServerBinaries entry.
+          machine-a-tron = mkCrateBinary { pname = "carbide-machine-a-tron"; meta = carbideMeta; };
         };
 
         # DPU-side binaries. Build host can be either x86_64 or aarch64 —
@@ -540,7 +598,7 @@
               extraArgs = dhcpCrateExtraArgs aarch64CrossPkgs;
             };
             carbide-dsx-exchange-consumer = mk "carbide-dsx-exchange-consumer";
-            carbide-admin-cli = mk "carbide-admin-cli";
+            nico-admin-cli = mk "nico-admin-cli";
             carbide-health = mk "carbide-health";
             carbide-ssh-console = mk "carbide-ssh-console";
             carbide-scout = mk "carbide-scout";
@@ -550,18 +608,14 @@
         # Go binaries (rest-api workspace)
         # ====================================================================
 
-        # Vendor hash for the rest-api Go module. TOFU on first build:
-        #   1. Set to `pkgs.lib.fakeHash` (already so below).
+        # Vendor hash for the rest-api Go module. Update via TOFU when go.mod changes:
+        #   1. Set to `pkgs.lib.fakeHash`.
         #   2. Run `nix build .#rest-api-api` — the build fails at vendoring
         #      with a "hash mismatch" error printing the expected sha256.
         #   3. Copy that sha256 here and rebuild.
-        #   4. Any updates to go.mod will require an updated hash
-        #      This is one of the guarantees of nix's hermetics.  One is 
-        #      fixed output derivations. Nix fetches this before the build
-        #      verifies the hash, and only then makes it availble for your build.
         # All rest-api binaries share this — they all live under the same
         # go.mod, so vendoring is identical for each.
-        restApiVendorHash = "sha256-x4h70HPPtkvuNWpQjKSs65/hJ8jpvxVdzWdgL/mPgIY=";
+        restApiVendorHash = "sha256-sj5gHXFJ8ORvZIzw4m6cgyzTVJOKomvDerdSzlUu7PI=";
 
         restApi = import ./nix/go/rest-api.nix {
           inherit pkgs version system;
@@ -574,8 +628,8 @@
         restApiBinariesArm64 = restApi.binariesArm64;
 
         # CLI tools exposed by `nix develop`. Container runtime tools are
-        # selected separately in `serviceRuntime` so each image only carries
-        # the shell-out utilities it actually needs.
+        # declared per service in nix/services/default.nix so each image only
+        # carries the shell-out utilities it actually needs.
         runtimeTools = with pkgs; [
           curl
           ipmitool
@@ -627,6 +681,15 @@
           crossPkgs = aarch64CrossPkgs;
         };
 
+        # Static file trees for the machine-validation images. Arch-independent,
+        # so the same derivations feed both the amd64 and arm64 containers.
+        machineValidationFiles = import ./nix/container/machine-validation.nix {
+          inherit pkgs;
+          configDir = ./crates/machine-validation/config;
+          imagesDir = ./crates/machine-validation/images;
+          scriptsDir = ./crates/machine-validation/scripts;
+        };
+
         # Scripts and firmware bundled into the nsm container at the paths the
         # Dockerfile establishes (WORKDIR /opt/nvswitch-manager before COPY).
         nsmStaticFiles = pkgs.runCommand "rest-api-nsm-static" { } ''
@@ -635,56 +698,11 @@
           cp -r ${./rest-api/nvswitch-manager/firmware} $out/opt/nvswitch-manager/firmware
         '';
 
-        # mkServiceRuntime takes a package set so the same map works for both
-        # amd64 (pkgs) and arm64 (aarch64CrossPkgs) container builds.
-        mkServiceRuntime = p: {
-          carbide-dns = with p; [ busybox ];
-          carbide-pxe = with p; [ busybox ];
-          carbide-dhcp = with p; [ kea busybox ];
-          carbide-api = with p; [ tpm2-tools ipmitool busybox iputils iproute2 ];
-          forge-dpu-agent = [ mftAarch64 ] ++ (with p; [ bash python3 iproute2 lldpd cri-tools busybox ]);
-          carbide-fmds = with p; [ busybox ];
-          forge-dhcp-server = with p; [ kea busybox ];
-          otelcol-contrib  = [ otelcolContribAarch64.passthru.wrapperScripts ] ++ (with p; [ bash busybox ]);
-          rest-api-nsm     = [ nsmStaticFiles ];
-        };
-
-        # Shell commands run at image build time to pre-create directories that
-        # services expect to exist at startup.
-        serviceExtraCommands = {
-          carbide-dhcp = "mkdir -p var/run/kea";
-          forge-dhcp-server = ''
-            mkdir -p var/run/kea
-            mkdir -p var/support/forge-dhcp/bin
-            ln -sf /bin/forge-dhcp-server var/support/forge-dhcp/bin/forge-dhcp-server
-          '';
-        };
-
-        # Legacy /opt/carbide/<alias> → /bin/<target> symlinks per service.
-        # Needed while PodSpecs still reference pre-rename binary names.
-        serviceOptCarbideAliases = {
-          carbide-admin-cli = [
-            { alias = "forge-admin-cli";   target = "nico-admin-cli"; }
-            { alias = "carbide-admin-cli"; target = "nico-admin-cli"; }
-          ];
-        };
-
-        # OCI Entrypoint per service. Only set for containers that run standalone
-        # (DPU images, sidecars) where the image itself must declare what to run.
-        # Server-side containers leave this unset — k8s PodSpecs drive execution.
-        serviceEntrypoints = {
-          carbide-fmds = [ "/bin/carbide-fmds" ];
-          forge-dpu-agent = [ "/bin/forge-dpu-agent" ];
-          forge-dhcp-server = [ "/var/support/forge-dhcp/bin/forge-dhcp-server" ];
-          transceiver-exporter = [ "/usr/bin/transceiver-exporter" ];
-          otelcol-contrib      = [ "/etc/otelcol-contrib/otelcol-wrapper" ];
-        };
-
-        # Legacy /opt/carbide/ directory stubs per service.
-        # Empty directories that services or k8s init containers may expect
-        # to exist at startup (mount points, runtime path checks, etc.).
-        serviceOptCarbideDirs = {
-          carbide-api = [ "pxe/templates" "migrations" "static" "firmware" ];
+        # What each service's image needs beyond its binary — runtime tools,
+        # entrypoint, directory fixups. One entry per service; see
+        # nix/services/default.nix for the field reference.
+        serviceSpecs = import ./nix/services {
+          inherit mftAarch64 otelcolContribAarch64 nsmStaticFiles;
         };
 
         # Per-service containers — one image per binary per architecture.
@@ -706,19 +724,36 @@
           let
             mkServiceContainer =
               name: pkg: p:
+              let
+                # Services with nothing to declare have no entry at all, which
+                # is the common case — a bare binary on the distroless base.
+                spec = serviceSpecs.${name} or { };
+              in
               mkContainer {
                 inherit name;
                 packages = [ pkg ];
-                runtime = (mkServiceRuntime p).${name} or [ ];
-                extraCommands = serviceExtraCommands.${name} or "";
-                optCarbideAliases = serviceOptCarbideAliases.${name} or [ ];
-                optCarbideDirs = serviceOptCarbideDirs.${name} or [ ];
-                entrypoint = serviceEntrypoints.${name} or null;
+                # `runtime` is a function of the package set so one spec serves
+                # both architectures; see nix/services/default.nix.
+                runtime = if spec ? runtime then spec.runtime p else [ ];
+                extraCommands = spec.extraCommands or "";
+                optCarbideAliases = spec.optCarbideAliases or [ ];
+                optCarbideDirs = spec.optCarbideDirs or [ ];
+                entrypoint = spec.entrypoint or null;
+                cmd = spec.cmd or null;
                 meta = carbideMeta;
               };
 
+            # Static-file containers — no compiled binary, just staged trees.
+            # They flow through mkServiceContainer unchanged because it only
+            # needs a derivation to place in `packages`.
+            machineValidationServices = {
+              machine-validation-runner = machineValidationFiles.runnerFiles;
+              machine-validation-config = machineValidationFiles.configFiles;
+            };
+
             # amd64 — native binaries + native runtime.
-            nativeServices = nativeRustBinaries // restApiBinariesNative;
+            nativeServices =
+              nativeRustBinaries // restApiBinariesNative // machineValidationServices;
             amd64Containers = pkgs.lib.mapAttrs' (
               name: pkg:
               pkgs.lib.nameValuePair "${name}-container" (mkServiceContainer name pkg pkgs)
@@ -731,6 +766,11 @@
               inherit (aarch64Binaries) forge-dpu-agent carbide-fmds forge-dhcp-server;
               transceiver-exporter = transceiverExporterAarch64;
               otelcol-contrib      = otelcolContribAarch64;
+              # Arch-independent file trees; only the wrapping image differs.
+              # CI publishes machine_validation-aarch64, so the config image
+              # needs an arm64 variant. The runner image is x86-only, matching
+              # Dockerfile.machine-validation-runner.
+              machine-validation-config = machineValidationFiles.configFiles;
             } // restApiBinariesFor "arm64";
             arm64Containers = pkgs.lib.mapAttrs' (
               name: pkg:
@@ -738,7 +778,28 @@
                 (mkServiceContainer name pkg aarch64CrossPkgs)
             ) aarch64Services;
 
+            # Specs are looked up by service name, so the two sides have to
+            # agree exactly. A spec whose name matches no service is never
+            # consulted, and a service with no spec silently takes every
+            # default — both produce an image that is wrong in a way nothing
+            # reports until it fails at runtime.
+            builtServiceNames = builtins.attrNames (nativeServices // aarch64Services);
+            declaredServiceNames = builtins.attrNames serviceSpecs;
+
+            undeclared = pkgs.lib.subtractLists declaredServiceNames builtServiceNames;
+            unmatched = pkgs.lib.subtractLists builtServiceNames declaredServiceNames;
+
           in
+          assert pkgs.lib.assertMsg (undeclared == [ ]) ''
+            These services build a container but have no entry in nix/services/default.nix:
+              ${builtins.concatStringsSep ", " undeclared}
+            Add one. Use `{ }` if the binary alone is the whole image.
+          '';
+          assert pkgs.lib.assertMsg (unmatched == [ ]) ''
+            nix/services/default.nix declares services that no container builds:
+              ${builtins.concatStringsSep ", " unmatched}
+            Check for a typo, or remove the entry if the service is gone.
+          '';
           amd64Containers // arm64Containers;
 
         # ====================================================================
@@ -866,49 +927,22 @@
           else
             { };
 
-        # Container copy-to-Docker apps are Linux-only: nix2container's skopeo
-        # nix: transport is not available on Darwin.
+        # Runnable targets — `nix run .#<name>`. Each app family lives in its
+        # own file under nix/apps/; see those files for what they do.
+        #
+        # Linux-only: both families operate on container images, and
+        # nix2container's skopeo `nix:` transport is not available on Darwin.
         # Multi-arch manifest creation is handled in CI via crane/skopeo directly.
         apps = pkgs.lib.optionalAttrs isLinux (
           let
-            amd64Containers = pkgs.lib.filterAttrs (n: _: !(pkgs.lib.hasSuffix "-arm64" n)) containers;
+            # Both app families take the amd64 images only — see
+            # nix/apps/copy-to-docker.nix for why.
+            appArgs = {
+              inherit pkgs;
+              containers = pkgs.lib.filterAttrs (n: _: !(pkgs.lib.hasSuffix "-arm64" n)) containers;
+            };
           in
-          # `nix run .#<name>-container-copy-to-docker` loads the amd64 image
-          # into the local Docker daemon via the patched skopeo nix: transport.
-          pkgs.lib.mapAttrs' (
-            name: container:
-            pkgs.lib.nameValuePair "${name}-copy-to-docker" {
-              type = "app";
-              program = "${container.passthru.copyToDockerDaemon}/bin/copy-to-docker-daemon";
-            }
-          ) amd64Containers
-          //
-          # `nix run .#sbom-<name>-container` generates a CycloneDX SBOM for
-          # the container using sbomnix, which traverses the container's full
-          # Nix store closure. The SBOM is written to ./<name>-container.cdx.json
-          # in the current directory. Use this output for nSpect uploads.
-          pkgs.lib.mapAttrs' (
-            name: container:
-            pkgs.lib.nameValuePair "sbom-${name}" {
-              type = "app";
-              program = "${pkgs.writeShellApplication {
-                name = "sbom-${name}";
-                runtimeInputs = [ pkgs.sbomnix ];
-                text = ''
-                  echo "Generating SBOM for ${name}..."
-                  sbomnix \
-                    --cdx  "./${name}.cdx.json" \
-                    --spdx "./${name}.spdx.json" \
-                    --csv  "./${name}.csv" \
-                    ${container}
-                  echo "SBOMs written to:"
-                  echo "  ./${name}.cdx.json   (CycloneDX — nSpect, grype)"
-                  echo "  ./${name}.spdx.json  (SPDX — broader toolchain)"
-                  echo "  ./${name}.csv        (human-readable summary)"
-                '';
-              }}/bin/sbom-${name}";
-            }
-          ) amd64Containers
+          import ./nix/apps/copy-to-docker.nix appArgs // import ./nix/apps/sbom.nix appArgs
         );
 
         # ==================================================================
@@ -919,8 +953,14 @@
           {
             packages =
               (with pkgs; [
+                # `just check-licenses` / `just check-bans` shell out to this.
+                cargo-deny
                 cargo-make
                 cargo-nextest
+                # The justfile is the entry point for builds and lints, and CI
+                # runs it as `nix develop --command just <recipe>` — so the
+                # shell has to provide it.
+                just
                 sccache
                 sqlx-cli
                 taplo
@@ -937,22 +977,66 @@
             # any crate via `cargo build`, not just one specific binary.
             # tpm2-tss and other Linux-only libs are excluded on Darwin via
             # allBuildInputs already being gated.
-            buildInputs = allBuildInputs;
+            # Unlike a per-binary derivation, the dev shell has to build every
+            # crate. carbide-dhcp's build.rs compiles C++ against Kea's headers,
+            # and those #include <boost/...>, so both are needed here. Binary
+            # derivations pick them up from dhcpCrateExtraArgs instead.
+            buildInputs =
+              allBuildInputs
+              ++ pkgs.lib.optionals isLinux [
+                pkgs.kea
+                pkgs.boost.dev
+              ];
             inherit nativeBuildInputs;
 
+            # Nix's stdenv injects -D_FORTIFY_SOURCE by default, but that
+            # requires -O1 or better. cargo's dev profile compiles the Kea C++
+            # shim (crates/dhcp/build.rs -> cc-rs) at -O0, so every debug build
+            # prints a wall of "#warning _FORTIFY_SOURCE requires compiling
+            # with optimization" from glibc's features.h. It is noise, not a
+            # miscompile — fortification is simply inert at -O0.
+            #
+            # Scoped to the dev shell on purpose: package builds go through
+            # crane in release mode, where -O is on, fortification is real, and
+            # this warning never fires. Disabling it globally would weaken the
+            # binaries we actually ship.
+            hardeningDisable = [ "fortify" ];
+
             # Route cargo compilations through sccache. First run populates
-            # the cache at ~/.cache/sccache; subsequent builds of the same
-            # source (across branches, checkouts, rebuilds) get cache hits
-            # at the individual object file level.
+            # the cache; subsequent builds of the same source (across
+            # branches, checkouts, rebuilds) get cache hits at the individual
+            # object file level.
             RUSTC_WRAPPER = "sccache";
+
+            # sccache finds its background server by port and its cache by
+            # SCCACHE_DIR. At the defaults the dev shell's sccache will try to
+            # use whichever server is already running — including one started
+            # by a different sccache installed on the host. The versions then
+            # disagree on the wire protocol and every compile dies with
+            # "error reading compile response from server", which reads like a
+            # compiler error but is not. Give the Nix sccache its own port and
+            # cache directory so the two can coexist. Both are overridable.
+            shellHook = ''
+              export SCCACHE_DIR="''${SCCACHE_DIR:-$HOME/.cache/sccache-nix}"
+              export SCCACHE_SERVER_PORT="''${SCCACHE_SERVER_PORT:-4227}"
+            '';
 
             SQLX_OFFLINE = "true";
             PROTOC = "${pkgs.protobuf}/bin/protoc";
             PROTOC_INCLUDE = "${pkgs.protobuf}/include";
+
+            # Nightly tooling for the lint tasks, supplied by Nix rather than
+            # rustup. `cargo fmt` honours RUSTFMT, so the format tasks need no
+            # `+toolchain` shim; CARGO_NIGHTLY is used to build carbide-lints.
+            # The cargo-make tasks fall back to `cargo +${RUST_NIGHTLY}` when
+            # these are unset, so rustup-based workflows keep working.
+            RUSTFMT = "${rustNightlyToolchain}/bin/rustfmt";
+            CARGO_NIGHTLY = "${rustNightlyToolchain}/bin/cargo";
           }
           // pkgs.lib.optionalAttrs isLinux {
             KEA_INCLUDE_PATH = "${pkgs.kea}/include/kea";
-            KEA_LIB_PATH = "${pkgs.kea}/lib";
+            # Same shim the package builds use — see mkKeaLibShim.
+            KEA_LIB_PATH = "${mkKeaLibShim pkgs}/lib";
 
             # Ensure dev-shell aarch64 cross-builds use the same 64KB-page-
             # compatible max-page-size as `nix build`. ARM64 server hardware

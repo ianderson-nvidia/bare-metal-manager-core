@@ -23,6 +23,8 @@
 # A CycloneDX SBOM for nSpect can be generated from the built container via
 # `nix run .#sbom-<name>-container`, which runs sbomnix against the
 # container's full Nix store closure (runtime deps only, no build-time deps).
+# Everything below that varies by service — runtime, extraCommands, entrypoint,
+# cmd, optCarbide* — is declared once per service in nix/services/default.nix.
 {
   name,
   packages,

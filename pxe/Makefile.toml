@@ -177,13 +177,12 @@ dependencies = [
   "setup-apt-repo-amd64",
 ]
 
-# Nix-staging counterpart to `build-boot-artifacts-x86-host-ci`.
-# Expects:
-#   nix build .#packages.x86_64-linux.boot-stage-x86 -o result-boot-x86
-# which produces ipxe.efi, golan.efi, and forge-scout_<ver>_amd64.deb
-# under `result-boot-x86/`. The `-from-nix` leaf tasks below read from
-# there instead of compiling iPXE locally or rebuilding the deb via
+# Counterpart to `build-boot-artifacts-x86-host-ci` that stages pre-built Nix
+# artifacts instead of compiling iPXE locally and rebuilding the scout deb via
 # `package-scout-x86_64-release-local`.
+#
+# Build the artifacts first:
+#   just boot-inputs
 [tasks.build-boot-artifacts-x86-host-from-nix]
 dependencies = [
   "mkdir-static",
@@ -257,18 +256,14 @@ dependencies = [
   "add-secure-boot-pk-pem",
 ]
 
-# Counterpart to `build-boot-artifacts-bfb` that consumes Nix-built
-# supporting packages instead of having cargo-make compile them:
+# Counterpart to `build-boot-artifacts-bfb` that consumes pre-built artifacts
+# for the scout binary and iPXE rather than compiling them here:
 #
-#   nix build .#packages.aarch64-linux.bfb-stage
+#   just boot-inputs
 #   cargo make --cwd pxe build-boot-artifacts-bfb-from-nix
 #
-# `nix build` creates a `result/` symlink in REPO_ROOT containing
-# the forge-scout binary and the forge-dpu / forge-scout debs (flat
-# layout). The `-from-nix` task variants below read from there
-# instead of `target/`, and the corresponding cargo-build deps
-# (`package-scout-aarch64-release-cross`, `build-forge-dpu-deb-local`)
-# are dropped.
+# The forge-dpu deb is still built by cargo-make — see
+# `internal-bfb-aarch64-from-nix` for why.
 [tasks.build-boot-artifacts-bfb-from-nix]
 dependencies = [
   "mkdir-static",
@@ -300,27 +295,6 @@ dependencies = [
   "mkosi-clean-scout-x86_64",
   "mkosi-clean-scout-loader-x86_64",
 ]
-
-# Nix-staging counterpart to `create-ephemeral-image-x86-host-ci`.
-# Expects:
-#   nix build .#packages.x86_64-linux.ephemeral-stage -o result-ephemeral-x86
-# which produces scout.cpio.zst, scout.efi, and qcow-imager.efi under
-# `result-ephemeral-x86/`. Drops the entire mkosi build chain
-# (mkosi-build-*, mkosi-clean-*, mkosi-generate-build-tmpdir, the
-# copy-forge-scout-* and stage-* tasks that prepare the mkosi.extra
-# overlay) — Nix produced the finished images already.
-#
-# IMPORTANT — NixOS rootfs, NOT Ubuntu. These images use a different
-# init / package set / runtime layout than the mkosi ephemeral images.
-# Useful for hermetic builds and local testing; not byte-identical to
-# CI's production output.
-[tasks.create-ephemeral-image-x86-host-from-nix]
-category = "Ephemeral Image"
-dependencies = [
-  "mkdir-static",
-  "copy-ephemeral-x86_64-from-nix",
-]
-
 [tasks.create-ephemeral-image-x86-host]
 category = "Ephemeral Image"
 dependencies = [
@@ -365,20 +339,6 @@ dependencies = [
   "mkosi-clean-scout-loader-aarch64",
   "mkosi-clean-qcow-imager-aarch64",
 ]
-
-# Nix-staging counterpart to `create-ephemeral-image-arm-host-ci`.
-# Expects:
-#   nix build .#packages.aarch64-linux.ephemeral-stage -o result-ephemeral-aarch64
-# which dispatches to the aarch64 builder, produces scout.cpio.zst,
-# scout.efi, and qcow-imager.efi under `result-ephemeral-aarch64/`.
-# Same NixOS-not-Ubuntu caveat as the x86 variant.
-[tasks.create-ephemeral-image-arm-host-from-nix]
-category = "Ephemeral Image"
-dependencies = [
-  "mkdir-static",
-  "copy-ephemeral-aarch64-from-nix",
-]
-
 [tasks.create-ephemeral-image-arm-host]
 category = "Ephemeral Image"
 dependencies = [
@@ -674,41 +634,6 @@ args = [
   "static/blobs/internal/aarch64/scout.efi",
 ]
 dependencies = ["mkdir-static"]
-
-# Nix-staging copy task for x86 ephemeral images. Reads scout.cpio.zst
-# + scout.efi + qcow-imager.efi from `result-ephemeral-x86/` (the
-# `nix build .#packages.x86_64-linux.ephemeral-stage` symlink) and
-# installs them at the same source-tree paths the mkosi-copy-* tasks
-# would have written to. `install -m 0644` so re-runs can overwrite.
-[tasks.copy-ephemeral-x86_64-from-nix]
-category = "Ephemeral Image"
-description = "Stage Nix-built NixOS x86 ephemeral images into the static webroot"
-dependencies = ["mkdir-static"]
-script = '''
-  install -m 0644 ${REPO_ROOT}/result-ephemeral-x86/scout.cpio.zst \
-     ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/scout.cpio.zst
-  install -m 0644 ${REPO_ROOT}/result-ephemeral-x86/scout.efi \
-     ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/scout.efi
-  install -m 0644 ${REPO_ROOT}/result-ephemeral-x86/qcow-imager.efi \
-     ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/qcow-imager.efi
-'''
-
-# Nix-staging copy task for aarch64 ephemeral images. Reads from
-# `result-ephemeral-aarch64/` (the `nix build .#packages.aarch64-linux.
-# ephemeral-stage` symlink, dispatched to the remote builder).
-[tasks.copy-ephemeral-aarch64-from-nix]
-category = "Ephemeral Image"
-description = "Stage Nix-built NixOS aarch64 ephemeral images into the static webroot"
-dependencies = ["mkdir-static"]
-script = '''
-  install -m 0644 ${REPO_ROOT}/result-ephemeral-aarch64/scout.cpio.zst \
-     ${REPO_ROOT}/pxe/static/blobs/internal/aarch64/scout.cpio.zst
-  install -m 0644 ${REPO_ROOT}/result-ephemeral-aarch64/scout.efi \
-     ${REPO_ROOT}/pxe/static/blobs/internal/aarch64/scout.efi
-  install -m 0644 ${REPO_ROOT}/result-ephemeral-aarch64/qcow-imager.efi \
-     ${REPO_ROOT}/pxe/static/blobs/internal/aarch64/qcow-imager.efi
-'''
-
 [tasks.ipxe-x86_64]
 category = "iPXE Kernel"
 description = "Build iPXE kernel for x86_64 (Legacy BIOS, EFI) and move to the carbide static webroot"
@@ -719,18 +644,19 @@ dependencies = [
   "ipxe-install-efi-x86_64",
 ]
 
-# Nix-staging replacement for ipxe-x86_64. Reads Nix-built EFI binaries
-# from `${REPO_ROOT}/result-boot-x86/` (produced by `nix build
-# .#packages.x86_64-linux.boot-stage-x86 -o result-boot-x86`). Uses
-# `install -m 0644` so subsequent runs can overwrite the 0444 files.
+# Replacement for ipxe-x86_64 that copies pre-built EFI binaries into place
+# rather than compiling iPXE from the submodule.
 [tasks.ipxe-x86_64-from-nix]
 category = "iPXE Kernel"
 description = "Stage Nix-built x86_64 iPXE EFI binaries into the static webroot"
+# Produced by `just boot-inputs` (or `nix build .#ipxe-efi-x86
+# -o result-ipxe-efi-x86`). `install -m 0644` rather than `cp` because
+# /nix/store files are 0444 and cp preserves that, breaking the second run.
 dependencies = ["mkdir-static"]
 script = '''
-  install -m 0644 ${REPO_ROOT}/result-boot-x86/ipxe.efi \
+  install -m 0644 ${REPO_ROOT}/result-ipxe-efi-x86/blobs/x86_64/ipxe.efi \
      ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/ipxe.efi
-  install -m 0644 ${REPO_ROOT}/result-boot-x86/golan.efi \
+  install -m 0644 ${REPO_ROOT}/result-ipxe-efi-x86/blobs/x86_64/golan.efi \
      ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/golan.efi
 '''
 
@@ -795,13 +721,11 @@ dependencies = [
   "ipxe-install-efi-aarch64",
 ]
 
-# Nix-staging replacement for ipxe-aarch64. Reads the Nix-built EFI
-# binaries from `${REPO_ROOT}/result-ipxe-aarch64/` (produced by
-# `nix build .#packages.x86_64-linux.ipxe-efi-aarch64 -o
-# result-ipxe-aarch64`) instead of compiling iPXE locally with
-# cargo-make's submodule + GCC path. The flake's iPXE builder uses an
-# older crane-stdenv that doesn't trip newer host-GCC's
-# `-Wunterminated-string-initialization` on net/pccrd.c.
+# Replacement for ipxe-aarch64 that copies pre-built EFI binaries into place
+# rather than cross-compiling iPXE from the submodule. Besides being faster,
+# it avoids the host-GCC path: newer GCC trips
+# `-Wunterminated-string-initialization` on net/pccrd.c, which the pinned
+# toolchain used to build these does not.
 #
 # Uses `install` rather than `cp` because the source files live in
 # /nix/store with mode 0444; a plain `cp` would copy that mode to the
@@ -813,9 +737,9 @@ category = "iPXE Kernel"
 description = "Stage Nix-built aarch64 iPXE EFI binaries into the static webroot"
 dependencies = ["mkdir-static"]
 script = '''
-  install -m 0644 ${REPO_ROOT}/result-ipxe-aarch64/blobs/aarch64/ipxe.efi \
+  install -m 0644 ${REPO_ROOT}/result-ipxe-efi-aarch64/blobs/aarch64/ipxe.efi \
      ${REPO_ROOT}/pxe/static/blobs/internal/aarch64/ipxe.efi
-  install -m 0644 ${REPO_ROOT}/result-ipxe-aarch64/blobs/aarch64/golan.efi \
+  install -m 0644 ${REPO_ROOT}/result-ipxe-efi-aarch64/blobs/aarch64/golan.efi \
      ${REPO_ROOT}/pxe/static/blobs/internal/aarch64/golan.efi
 '''
 
@@ -1058,12 +982,18 @@ dependencies = [
   "bfb-rebuild-bfb",
 ]
 
-# Mirror of `internal-bfb-aarch64` for the Nix-staging flow. Drops
-# the cargo-build dep `build-forge-dpu-deb-local` (Nix already
-# produced the deb) and swaps `bfb-add-scout-to-bfb` and
-# `cp-forge-dpu-package-to-bfb` for their `-from-nix` variants
-# below, which read from `${REPO_ROOT}/result/` rather than `target/`
-# and have no cargo dependencies.
+# Mirror of `internal-bfb-aarch64` for the Nix-staging flow. The only
+# difference is the scout binary, which comes from Nix
+# (`bfb-add-scout-to-bfb-from-nix`) rather than a cargo cross-build.
+#
+# Everything else is deliberately identical, including
+# `build-forge-dpu-deb-local`: the forge-dpu deb bundles the DPU agent,
+# dhcp-server, fmds, otelcol, node_exporter and transceiver-exporter, and has
+# no Nix derivation, so cargo-make still assembles it. An earlier version of
+# this task dropped that dependency on the assumption Nix produced the deb —
+# it does not, so the BFB was built against whatever happened to be left in
+# target/debs/. It also dropped `bfb-stage-embedded-bootstrap-ca`, which meant
+# the resulting BFB silently lacked embedded_forge_root.pem.
 [tasks.internal-bfb-aarch64-from-nix]
 category = "iPXE Kernel"
 description = "BFB assembly using Nix-staged supporting packages"
@@ -1083,12 +1013,14 @@ dependencies = [
   "bfb-add-debs-to-bfb",
   "bfb-add-nvinit-setup-to-bfb",
   "bfb-add-dev-forge-root-ca-to-bfb",
+  "bfb-stage-embedded-bootstrap-ca",
   "mkdir-hbn-folder-in-bfb",
   "download-hbn-installer-to-bfb",
   "mv-hbn-configs-to-bfb",
   "mv-hbn-scripts-to-bfb",
   "cleanup-hbn-scripts",
-  "cp-forge-dpu-package-to-bfb-from-nix",
+  { name = "build-forge-dpu-deb-local", path = "${REPO_ROOT}/bluefield" },
+  "cp-forge-dpu-package-to-bfb",
   "bfb-copy-efi",
   "bfb-remove-extracted-efi",
   "replace-bfpxe-script",
@@ -1263,8 +1195,15 @@ dependencies = [
 [tasks.bfb-add-scout-to-bfb-from-nix]
 category = "iPXE Kernel"
 description = "Add the Nix-built scout to the BFB"
-command = "cp"
-args = ["${REPO_ROOT}/result/forge-scout", "${BUILD_LOCATION}"]
+# The carbide-scout crate's [[bin]] target is named forge-scout.
+# Produced by `just boot-inputs`.
+command = "install"
+args = [
+  "-m",
+  "0755",
+  "${REPO_ROOT}/result-carbide-scout-aarch64/bin/forge-scout",
+  "${BUILD_LOCATION}/forge-scout",
+]
 
 [tasks.download-hbn-installer-to-bfb-sa]
 category = "iPXE Kernel"
@@ -1343,15 +1282,6 @@ args = [
   "${REPO_ROOT}/target/debs/forge-dpu_${PKG_VERSION}_arm64.deb",
   "${BUILD_LOCATION}/forge-dpu.deb",
 ]
-
-# Nix-staging variant — reads from `result/` and globs the version.
-[tasks.cp-forge-dpu-package-to-bfb-from-nix]
-category = "iPXE Kernel"
-description = "Copy Nix-built forge-dpu deb into the BFB initramfs staging dir"
-script = '''
-  cp ${REPO_ROOT}/result/forge-dpu_*_arm64.deb ${BUILD_LOCATION}/forge-dpu.deb
-'''
-
 [tasks.setup-apt-repo-arm64]
 category = "iPXE Kernel"
 dependencies = ["mkdir-static"]
@@ -1385,21 +1315,25 @@ Label: Ubuntu
 Architecture: arm64" > Release
 '''
 
-# Nix-staging variant — reads forge-dpu / forge-scout debs from
-# `${REPO_ROOT}/result/` (the `nix build .#bfb-stage` symlink) and
-# globs the version. dpkg-scanpackages / Release-file generation is
-# identical to `setup-apt-repo-arm64`.
+# Variant of `setup-apt-repo-arm64` that takes the forge-scout deb from a
+# pre-built artifact rather than rebuilding it. The version is globbed since
+# it is derived from the git revision. dpkg-scanpackages and Release-file
+# generation are identical to `setup-apt-repo-arm64`.
 [tasks.setup-apt-repo-arm64-from-nix]
 category = "iPXE Kernel"
 dependencies = ["mkdir-static"]
-description = "Setup apt repo using Nix-built forge-dpu and forge-scout debs"
-# `install -m 0644` rather than `cp` for the same reason as
-# `ipxe-aarch64-from-nix`: /nix/store files are 0444, plain `cp`
-# preserves that mode, second run can't overwrite.
+description = "Setup apt repo using the Nix-built forge-scout deb and the cargo-make forge-dpu deb"
+# forge-scout comes from Nix (`just boot-inputs`). forge-dpu does
+# not: that deb bundles the DPU agent, dhcp-server, fmds, otelcol,
+# node_exporter and transceiver-exporter, and is still assembled by
+# `cargo make --cwd bluefield build-forge-dpu-deb-local` into target/debs/.
+#
+# `install -m 0644` rather than `cp` for the Nix input: /nix/store files are
+# 0444 and cp preserves that mode, so a second run cannot overwrite.
 script = '''
-  install -m 0644 ${REPO_ROOT}/result/forge-dpu_*_arm64.deb \
+  install -m 0644 ${REPO_ROOT}/target/debs/forge-dpu_*_arm64.deb \
   "${REPO_ROOT}/pxe/static/blobs/internal/apt/pool/base/f/forge-dpu/"
-  install -m 0644 ${REPO_ROOT}/result/forge-scout_*_arm64.deb \
+  install -m 0644 ${REPO_ROOT}/result-forge-scout-deb-arm64/forge-scout_*_arm64.deb \
   "${REPO_ROOT}/pxe/static/blobs/internal/apt/pool/base/f/forge-scout/"
 
   cd "${REPO_ROOT}/pxe/static/blobs/internal/apt"
@@ -1456,16 +1390,16 @@ Label: Ubuntu
 Architecture: amd64" > Release
 '''
 
-# Nix-staging variant — reads forge-scout amd64 deb from `result-boot-
-# x86/` (the `nix build .#boot-stage-x86` symlink) and globs the
-# version. dpkg-scanpackages / Release-file generation identical to
-# `setup-apt-repo-amd64`.
+# Variant of `setup-apt-repo-amd64` that takes the forge-scout deb from a
+# pre-built artifact rather than rebuilding it. The version is globbed since
+# it is derived from the git revision. dpkg-scanpackages and Release-file
+# generation are identical to `setup-apt-repo-amd64`.
 [tasks.setup-apt-repo-amd64-from-nix]
 category = "iPXE Kernel"
 dependencies = ["mkdir-static"]
-description = "Setup apt repo using Nix-built forge-scout amd64 deb"
+description = "Setup apt repo using the pre-built forge-scout amd64 deb"
 script = '''
-  install -m 0644 ${REPO_ROOT}/result-boot-x86/forge-scout_*_amd64.deb \
+  install -m 0644 ${REPO_ROOT}/result-forge-scout-deb-amd64/forge-scout_*_amd64.deb \
   "${REPO_ROOT}/pxe/static/blobs/internal/apt/pool/base/f/forge-scout/"
 
   cd "${REPO_ROOT}/pxe/static/blobs/internal/apt"
@@ -1612,31 +1546,6 @@ cat forge_tmp.bfb bf.cfg > forge.bfb
 rm forge_tmp.bfb
 '''
 cwd = "static/blobs/internal/aarch64"
-
-[tasks.container-boot-artifacts-x86_64-ci]
-category = "iPXE Kernel"
-description = "Package x86_64 EFI iPXE kernel and rootdisk"
-command = "docker"
-args = [
-  "-t",
-  "boot-artifacts-prod-x86_64:${CI_JOB_ID}",
-  "-f",
-  "${CI_PROJECT_DIR}/pxe/Dockerfile",
-  "${CI_PROJECT_DIR}/pxe",
-]
-
-[tasks.container-boot-artifacts-aarch64-ci]
-category = "iPXE Kernel"
-description = "Package aarch64 EFI iPXE kernel and rootdisk"
-command = "docker"
-args = [
-  "-t",
-  "boot-artifacts-prod-aarch64:${CI_JOB_ID}",
-  "-f",
-  "${CI_PROJECT_DIR}/pxe/Dockerfile",
-  "${CI_PROJECT_DIR}/pxe",
-]
-
 [tasks.replace-bfpxe-script]
 category = "iPXE Kernel"
 description = "Switch bfpxe script from BFB to custom one"
