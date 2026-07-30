@@ -188,6 +188,7 @@ dependencies = [
   "mkdir-static",
   "ipxe-x86_64-from-nix",
   "setup-apt-repo-amd64-from-nix",
+  "scout-x86_64-from-nix",
 ]
 
 # This probably doesn't work yet.  there's no support for building arm images locally
@@ -658,6 +659,31 @@ script = '''
      ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/ipxe.efi
   install -m 0644 ${REPO_ROOT}/result-ipxe-efi-x86/blobs/x86_64/golan.efi \
      ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/golan.efi
+'''
+
+[tasks.scout-x86_64-from-nix]
+category = "Ephemeral Image"
+description = "Stage the Nix-built scout root filesystem into the static webroot"
+# Replaces mkosi-build-scout-x86_64. The loader is unchanged and still fetches
+# scout.squashfs over HTTP, measures it into the TPM and soft-reboots into it.
+#
+# scout.nixos-system carries the store path of the system inside the squashfs.
+# NixOS keeps only /nix/store in the image and builds the rest of the root at
+# boot, so the loader needs to be told which toplevel to start; the two files
+# are staged together because they are only meaningful as a pair.
+#
+# Produced by `just scout` (or `nix build .#scout-store -o result-scout-store`).
+# install -m 0644 rather than cp because /nix/store files are 0444 and cp
+# preserves that, breaking the second run.
+dependencies = ["mkdir-static"]
+script = '''
+  install -m 0644 -L ${REPO_ROOT}/result-scout-store/scout-store.squashfs \
+     ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/scout.squashfs
+  install -m 0644 ${REPO_ROOT}/result-scout-store/scout-store.nixos-system \
+     ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/scout.nixos-system
+  echo "Staged:"
+  echo "  pxe/static/blobs/internal/x86_64/scout.squashfs"
+  echo "  pxe/static/blobs/internal/x86_64/scout.nixos-system"
 '''
 
 [tasks.ipxe-config]

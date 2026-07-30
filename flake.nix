@@ -615,7 +615,7 @@
         #   3. Copy that sha256 here and rebuild.
         # All rest-api binaries share this — they all live under the same
         # go.mod, so vendoring is identical for each.
-        restApiVendorHash = "sha256-sj5gHXFJ8ORvZIzw4m6cgyzTVJOKomvDerdSzlUu7PI=";
+        restApiVendorHash = "sha256-Ty2FyzJeTRpDjBiYuUQ91EPHtKLmzgAg3s9M1UBpOtI=";
 
         restApi = import ./nix/go/rest-api.nix {
           inherit pkgs version system;
@@ -749,6 +749,7 @@
             machineValidationServices = {
               machine-validation-runner = machineValidationFiles.runnerFiles;
               machine-validation-config = machineValidationFiles.configFiles;
+              boot-artifacts-x86-64 = bootArtifactsFiles;
             };
 
             # amd64 — native binaries + native runtime.
@@ -876,6 +877,65 @@
         # carbide-scout cross-compiled for aarch64. Consumed by the
         # forge-scout-deb-arm64 deb package defined in nix/deb/debs.nix.
         carbide-scout-aarch64 = mkCrossCrateBinary { pname = "carbide-scout"; };
+
+        # ====================================================================
+        # Scout discovery environment as a NixOS netboot UKI
+        #
+        # An alternative to the mkosi-built scout.efi + scout.cpio.zst pair.
+        # One file rather than two, and no Ubuntu archive is consulted at
+        # build time. Published to the same path the iPXE templates already
+        # reference, so carbide-pxe needs no change to serve it.
+        # ====================================================================
+        scoutNixosSystem = nixpkgs.lib.nixosSystem {
+          # The module takes forgeScout rather than reaching into the flake so
+          # that the same configuration can be evaluated against a cross
+          # package set for the aarch64 variant.
+          specialArgs = {
+            forgeScout = nativeRustBinaries.carbide-scout;
+            scoutVersion = version;
+          };
+          modules = [
+            ./nix/os/scout.nix
+            ./nix/os/scout-nvidia.nix
+            { nixpkgs.hostPlatform = system; }
+          ];
+        };
+
+        # The root filesystem the loader fetches over HTTP, replacing the
+        # scout-oss profile's scout.squashfs. Staged into the webroot by
+        # `cargo make --cwd pxe scout-x86_64-from-nix`.
+        scout-store = import ./nix/os/scout-store.nix {
+          inherit pkgs;
+          nixosSystem = scoutNixosSystem;
+        };
+
+        # The boot-artifacts payload, assembled from the derivations above
+        # rather than from whatever is staged in pxe/static/blobs/internal.
+        # Wrapped into a carrier image below, replacing
+        # dev/docker/Dockerfile.release-artifacts-x86_64.
+        bootArtifactsFiles = import ./nix/container/boot-artifacts.nix {
+          inherit pkgs;
+          arch = "x86_64";
+          ipxe = ipxe-efi-x86;
+          scoutLoader = scout-loader;
+          scoutStore = scout-store;
+          scoutDeb = debs.forge-scout-deb;
+        };
+
+        # The small image iPXE boots, which fetches scout-store and pivots into
+        # it. Replaces the scout-loader mkosi profile; published as scout.efi.
+        scoutLoaderSystem = nixpkgs.lib.nixosSystem {
+          modules = [
+            ./nix/os/scout-loader.nix
+            { nixpkgs.hostPlatform = system; }
+          ];
+        };
+
+        scout-loader = import ./nix/os/uki.nix {
+          inherit pkgs;
+          nixosSystem = scoutLoaderSystem;
+          name = "scout-loader";
+        };
       in
       {
         # ==================================================================
@@ -901,6 +961,8 @@
                 ipxe-efi-x86
                 ipxe-efi-aarch64
                 carbide-scout-aarch64
+                scout-store
+                scout-loader
                 ;
 
               # Expose the deps-only derivation so CI can cache it directly.

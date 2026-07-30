@@ -216,6 +216,22 @@
     entrypoint = [ "/opt/machine-a-tron/bin/machine-a-tron" ];
   };
 
+  boot-artifacts-x86-64 = {
+    # Carries the PXE blobs and nothing else. nico-pxe runs it as an init
+    # container that copies /x86_64 into a shared volume, so the image needs a
+    # shell for that `cp` and something to keep it alive while the copy runs.
+    runtime =
+      p: with p; [
+        bash
+        coreutils
+      ];
+    cmd = [
+      "/bin/bash"
+      "-c"
+      "trap : TERM INT; sleep 9999999999d & wait"
+    ];
+  };
+
   machine-validation-runner = {
     # bash runs the validation scripts; coreutils supplies a sleep that accepts
     # the `d` suffix those scripts use.

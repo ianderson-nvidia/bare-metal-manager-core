@@ -168,6 +168,16 @@ boot-inputs: _check-nix ipxe deb-scout
     @echo "  result-forge-scout-deb-amd64/ result-forge-scout-deb-arm64/"
     @echo "  result-carbide-scout-aarch64/"
 
+# Build the scout root filesystem for the loader to fetch.
+#
+# Produces scout-store.squashfs plus scout-store.nixos-system, the toplevel
+# path held inside it. Stage them into the webroot with:
+#
+# cargo make --cwd pxe scout-x86_64-from-nix
+scout: _check-nix
+    nix build .#scout-store -o result-scout-store
+    @cat result-scout-store/sizes.txt
+
 # ==============================================================================
 # Compliance
 # ==============================================================================
