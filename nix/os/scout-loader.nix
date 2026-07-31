@@ -79,15 +79,19 @@ in
   documentation.nixos.enable = false;
   fonts.fontconfig.enable = false;
   i18n.supportedLocales = [ "en_US.UTF-8/UTF-8" ];
+  # The loader fetches one squashfs and pivots into it. It never evaluates a
+  # derivation, never substitutes a path, and never rebuilds itself, so there
+  # is nothing for Nix to do here.
+  #
+  # scout.nix sets this true, because a running scout updates itself with
+  # `nix copy`. That difference is deliberate and not worth making uniform:
+  # enabling it here pulled the nixpkgs source in through the flake registry
+  # and added about 100 MB to the artifact iPXE transfers to every machine.
+  #
+  # nix, boost and icu4c remain in the closure regardless — netboot.nix's
+  # register-nix-paths references config.nix.package whether Nix is enabled or
+  # not. This option governs configuration, not closure membership.
   nix.enable = false;
-
-  # netboot.nix's register-nix-paths unit is left enabled. It runs
-  # `nix-store --load-db` to populate the store database, which is empty on the
-  # tmpfs root even though the paths themselves are in the squashfs, and it
-  # keeps nix in the closure — nix links boost, which links icu4c, for about
-  # 40 MB. Nothing in the loader queries the store, so that is dead weight
-  # here, but leaving the unit alone keeps this image behaving like any other
-  # NixOS netboot system rather than one with a surprise removed from it.
   hardware.graphics.enable = false;
   services.speechd.enable = false;
   boot.supportedFilesystems.zfs = lib.mkForce false;

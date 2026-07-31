@@ -681,6 +681,7 @@ script = '''
      ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/scout.squashfs
   install -m 0644 ${REPO_ROOT}/result-scout-store/scout-store.nixos-system \
      ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/scout.nixos-system
+
   echo "Staged:"
   echo "  pxe/static/blobs/internal/x86_64/scout.squashfs"
   echo "  pxe/static/blobs/internal/x86_64/scout.nixos-system"

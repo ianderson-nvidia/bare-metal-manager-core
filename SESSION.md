@@ -440,43 +440,33 @@ Worth asking separately from the port: whether every scout boot needs the full
 cuda13 plugin set, or whether diagnostics could be fetched only for nodes that
 report GPUs. DCGM ships a cudaless plugin directory for that split.
 
-### Open question: is DPU scout a deb, and does that make the deb permanent?
+### Resolved: scout does not run on DPUs
 
-Scout runs on x86_64 hosts, aarch64 hosts, and DPUs. The DPU runs a vendor
-BlueField/DOCA image that carbide does not control, so there is no prospect of
-NixOS owning that OS and no Nix store to copy a closure into.
+Scout runs on x86_64 and aarch64 *hosts*. It is not used on DPUs. The
+`discovery-scout-aarch64-dpu` template in crates/ipxe-renderer/templates.yaml
+boots carbide.efi/carbide.root with BlueField parameters (bfnet=, bfks=), which
+is a different image from host scout and out of scope for this port.
 
-crates/ipxe-renderer/templates.yaml has three discovery templates, and the DPU
-one is a different image entirely:
+What that settles:
 
-    discovery-scout-x86_64        kernel .../x86_64/scout.efi
-    discovery-scout-aarch64       kernel .../aarch64/scout.efi        (host)
-    discovery-scout-aarch64-dpu   kernel .../aarch64/carbide.efi
-                                  imgfetch .../aarch64/carbide.root
-                                  bfnet=, bfks=<cloudinit>/user-data
+  * **forge-scout deb is transitional after all.** It exists to install the
+    agent into the mkosi scout initramfs. If NixOS scout replaces mkosi on both
+    host architectures, the deb and the apt-repo generation in
+    nix/container/boot-artifacts.nix go with it. An earlier note here claimed
+    the deb was permanent because DPUs needed it; that was wrong, and it was a
+    correction I made to a claim that had been right.
+  * **forge-dpu deb stays.** setup-apt-repo-arm64 publishes two debs —
+    forge-scout and forge-dpu — and only the second serves the DPU agent, which
+    runs on a vendor OS carbide does not control. That deb and its repo are
+    permanent regardless of what happens to scout.
+  * **One update mechanism, not two.** The `nix copy` + switch-to-configuration
+    story applies to every machine scout runs on, because they are all hosts
+    where carbide owns the OS. There is no second, apt-driven update path to
+    build.
 
-So the aarch64 *host* path is the same shape as x86 and should port the same
-way. The DPU path is BlueField-specific and is not a NixOS system.
-
-**To confirm:** how forge-scout actually reaches a DPU. If it is the
-forge-scout arm64 deb installed into the DPU image from the apt repo we
-publish, then:
-
-  * nix/deb/debs.nix and the apt repo generation in
-    nix/container/boot-artifacts.nix are permanent interfaces, not mkosi-era
-    scaffolding awaiting removal. An earlier note in this file said the deb
-    goes away with mkosi; that is wrong for aarch64 if this is how DPUs are
-    served.
-  * DPU scout updates stay apt-driven against that repo. The `nix copy` +
-    switch-to-configuration story discussed for hosts does not apply there,
-    because it needs a Nix store on the target.
-  * carbide ends up with two update mechanisms by necessity — closure-based
-    for hosts, package-based for DPUs — and check-scout-updates only covers
-    the host side today.
-
-Worth checking at the same time whether carbide.efi/carbide.root are built by
-the same mkosi profiles as host scout or by the BFB flow, since that decides
-whether the DPU path is even in scope for the mkosi retirement.
+The aarch64 host template is the same shape as x86 — `kernel .../aarch64/scout.efi`
+with mac=, cli_cmd=, machine_id=, server_uri= — so the port cross-compiles
+rather than needing a second design.
 
 ### Untested, and what to test first
 

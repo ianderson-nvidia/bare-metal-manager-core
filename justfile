@@ -168,15 +168,26 @@ boot-inputs: _check-nix ipxe deb-scout
     @echo "  result-forge-scout-deb-amd64/ result-forge-scout-deb-arm64/"
     @echo "  result-carbide-scout-aarch64/"
 
-# Build the scout root filesystem for the loader to fetch.
-#
-# Produces scout-store.squashfs plus scout-store.nixos-system, the toplevel
-# path held inside it. Stage them into the webroot with:
+# scout-store.nixos-system names the system inside the squashfs and has to
+# travel with it — the loader reads it to decide what to soft-reboot into.
+# Stage both into the webroot with:
 #
 # cargo make --cwd pxe scout-x86_64-from-nix
+#
+# Build both halves of scout: the loader, and the rootfs the loader fetches.
 scout: _check-nix
-    nix build .#scout-store -o result-scout-store
+    nix build .#scout-loader -o result-scout-loader
+    nix build .#scout-store  -o result-scout-store
+    @echo "loader:  $(stat -c %s result-scout-loader/scout-loader.efi | numfmt --to=iec)"
     @cat result-scout-store/sizes.txt
+
+# Replaces dev/docker/Dockerfile.release-artifacts-x86_64, which COPYs whatever
+# happens to be staged in pxe/static/blobs/internal. This is assembled from the
+# derivations instead, so the image cannot pick up a stale artifact.
+#
+# Build the boot-artifacts container: iPXE, scout loader and rootfs, and cache.
+boot-artifacts: _check-nix
+    nix build .#boot-artifacts-x86-64-container -o result-boot-artifacts
 
 # ==============================================================================
 # Compliance

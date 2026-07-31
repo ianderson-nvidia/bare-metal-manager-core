@@ -919,7 +919,7 @@
           ipxe = ipxe-efi-x86;
           scoutLoader = scout-loader;
           scoutStore = scout-store;
-          scoutDeb = debs.forge-scout-deb;
+          scoutSystem = scoutNixosSystem.config.system.build.toplevel;
         };
 
         # The small image iPXE boots, which fetches scout-store and pivots into

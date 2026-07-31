@@ -11,6 +11,7 @@
 # (machine_id, server_uri, cli_cmd, mac). See the forge-scout-pre service
 # below for how those reach the agent.
 {
+  config,
   lib,
   pkgs,
   modulesPath,
@@ -27,15 +28,6 @@ let
   # note beside both in environment.systemPackages.
   mftX86 = import ../third-party/mft-x86_64.nix { inherit pkgs; };
 
-  # mkosi.extra/usr/local/sbin/ipmitool, which shadows the real binary by
-  # sitting earlier on PATH. `lan print` is rerouted to freeipmi's bmc-config
-  # because ipmitool returns garbage for it on some BMCs; everything else
-  # passes through. forge-scout calls plain `ipmitool` and depends on getting
-  # this behaviour.
-  #
-  # Nix has no /usr/local/sbin to exploit, so the shadowing is done with
-  # hiPrio: the wrapper and the real package both provide bin/ipmitool, and
-  # priority decides which one lands in the system profile.
   # mkosi.extra/opt/forge/check-nvme-drives.sh — a predicate carbide calls to
   # decide whether a machine's disks are usable before provisioning it.
   # Exit status is the whole interface; the output is for the operator.
@@ -76,6 +68,15 @@ let
     done
   '';
 
+  # mkosi.extra/usr/local/sbin/ipmitool, which shadows the real binary by
+  # sitting earlier on PATH. `lan print` is rerouted to freeipmi's bmc-config
+  # because ipmitool returns garbage for it on some BMCs; everything else
+  # passes through. forge-scout calls plain `ipmitool` and depends on getting
+  # this behaviour.
+  #
+  # Nix has no /usr/local/sbin to exploit, so the shadowing is done with
+  # hiPrio: the wrapper and the real package both provide bin/ipmitool, and
+  # priority decides which one lands in the system profile.
   ipmitoolWrapper = lib.hiPrio (
     pkgs.writeShellScriptBin "ipmitool" ''
       set -o pipefail
@@ -90,12 +91,49 @@ let
 in
 
 {
+  # netboot.nix directly, not netboot-minimal.nix.
+  #
+  # The chain is netboot-minimal -> netboot-base -> netboot.nix plus
+  # profiles/base.nix and profiles/installation-device.nix. Scout wants one
+  # thing from that stack, hardware.enableAllHardware, and inherits a NixOS
+  # installer to get it: a copy of nixpkgs via cd-dvd/channel.nix, vim, and
+  # nixos-install, none of which a discovery image has any use for.
+  #
+  # netboot.nix on its own is the mechanism — squashfsStore, netbootRamdisk,
+  # and the tmpfs-root / overlay-store layout that makes a single boot artifact
+  # possible.
   imports = [
-    # Gives us system.build.kernel and system.build.netbootRamdisk, where the
-    # ramdisk carries a squashfs of the store. This is the piece that makes a
-    # single-file boot artifact possible.
-    (modulesPath + "/installer/netboot/netboot-minimal.nix")
+    (modulesPath + "/installer/netboot/netboot.nix")
   ];
+
+  # Scout inventories machines nobody enumerated in advance, so it needs
+  # drivers for hardware it has never seen. netboot-base set this implicitly;
+  # stating it here makes the breadth a decision rather than a side effect of
+  # importing an installer.
+  hardware.enableAllHardware = true;
+
+  # netboot-minimal disabled this, and it was right to: linux-firmware is
+  # 770 MB, over half the image. Enabling it on the reasoning that a device
+  # which cannot load firmware fails to probe — and so goes unreported — cost
+  # more than the entire rest of the closure.
+  #
+  # The mkosi image does not ship linux-firmware either, so this matches what
+  # carbide runs today. If a specific NIC or controller turns out to need a
+  # blob, add that firmware package rather than the whole set.
+  hardware.enableRedistributableFirmware = lib.mkForce false;
+
+  # The nixpkgs source (196 MB) is in the closure via /etc/nix/registry.json,
+  # which nix.enable creates so `nix run nixpkgs#foo` resolves on a normal
+  # machine. Scout evaluates nothing and only substitutes prebuilt closures, so
+  # it is dead weight — but `nix.registry = lib.mkForce { }` is not the way to
+  # drop it: setting that option makes the module system resolve registry
+  # entries, which reaches out to GitHub for an unpinned flake and hangs the
+  # build with no timeout. Try nix.settings.flake-registry = "" instead, and
+  # test it on its own before believing the size number.
+
+  # profiles/base.nix supplied a default package set — an editor and assorted
+  # shell tooling. Scout names everything it uses below.
+  environment.defaultPackages = lib.mkForce [ ];
 
   # ==========================================================================
   # Size reduction
@@ -109,9 +147,27 @@ in
   documentation.nixos.enable = false;
   fonts.fontconfig.enable = false;
   i18n.supportedLocales = [ "en_US.UTF-8/UTF-8" ];
-  # Scout never evaluates Nix expressions; it only runs the closure it booted
-  # with. Dropping the daemon and its channel machinery removes Nix itself.
-  nix.enable = false;
+  # Nix is enabled so a running scout can be updated by fetching the new
+  # closure from a binary cache and activating it, rather than rebooting into
+  # a whole new image:
+  #
+  #   nix copy --from <cache> "$new_system"
+  #   "$new_system"/bin/switch-to-configuration switch
+  #
+  # `nix copy` consults the local store database and transfers only the paths
+  # this machine is missing, so an agent-only rebuild moves megabytes instead
+  # of the 1.4 GB image. The database is populated at boot by netboot.nix's
+  # register-nix-paths unit, which is what makes the "only what is missing"
+  # part work — without it the store looks empty and everything re-downloads.
+  #
+  # This costs almost nothing in size: nix, boost and icu4c are already in the
+  # closure because that unit references config.nix.package regardless of this
+  # option. `nix.enable` governs whether NixOS *configures* Nix, not whether
+  # the package is present.
+  #
+  # Still to decide before this is usable: where the cache lives, and how it is
+  # signed. Until then Nix is present and idle — nothing invokes it at boot.
+  nix.enable = true;
   # No display and no input devices beyond a serial console. Mesa drags in
   # LLVM, which is one of the larger single items in a default closure.
   hardware.graphics.enable = false;
@@ -382,19 +438,26 @@ in
   # pxe/common_files/check-scout-updates.{sh,service,timer}.
   #
   # A machine that sits in discovery for days should pick up a rebuilt scout
-  # rather than run the one it booted with indefinitely. The original compares
-  # the Last-Modified of the served rootfs against a value the scout-loader
-  # wrote to /rootfs_info.txt when it fetched it.
+  # rather than run the one it booted with indefinitely.
   #
-  # There is no loader here — iPXE hands the artifacts straight to the kernel
-  # and nothing in userspace sees the fetch — so the baseline is recorded on
-  # first boot instead. The difference is a small race: an image published
-  # between iPXE fetching and this unit running is recorded as current and
-  # missed until the next one. That is a day's staleness at worst, against a
-  # timer that only fires after 24 hours of uptime anyway.
+  # The original compares the Last-Modified header of the served rootfs against
+  # a copy the loader saved at fetch time. That works, but it is a proxy: an
+  # image republished with identical contents gets a new timestamp and reboots
+  # the fleet for nothing, and a server that does not set the header at all
+  # makes the check fail open.
   #
-  # Polls the same artifact the loader fetched, so the URL is derived the same
-  # way — see nix/os/scout-loader.nix.
+  # A NixOS system has a better answer to "am I current". Its store path is a
+  # hash of the entire closure, the running system knows it as
+  # /run/current-system, and scout-store publishes the same path beside the
+  # squashfs. Comparing those two strings is exact in both directions: equal
+  # means byte-identical systems, different means genuinely different. It also
+  # needs nothing from the loader, which removes the one piece of state the two
+  # had to agree on.
+  #
+  # Reboot remains the remedy. With nix.enable = true the closure could instead
+  # be fetched and activated in place with switch-to-configuration, which is
+  # the reason Nix is enabled — but that needs a binary cache to fetch from,
+  # and a kernel or driver change forces a reboot regardless.
   systemd.services.check-scout-updates = {
     description = "Reboot if a newer scout image has been published";
     after = [ "network-online.target" ];
@@ -405,13 +468,18 @@ in
       gnused
       gnugrep
       systemd
+      # `nix copy` fetches the new closure; config.nix.package rather than
+      # pkgs.nix so it is the same nix the rest of the system is configured
+      # with, and so this unit does not pin a second copy into the closure.
+      config.nix.package
     ];
     serviceConfig.Type = "oneshot";
     script = ''
       set -u
-      STATE=/run/forge/scout-rootfs-info
       MIN_UPTIME=86400
 
+      # Long enough that a machine part-way through discovery is not rebooted
+      # out from under whatever asked for it.
       uptime=$(cut -d. -f1 /proc/uptime)
       if [ "$uptime" -lt "$MIN_UPTIME" ]; then
         echo "min uptime not reached ($uptime < $MIN_UPTIME)"
@@ -420,31 +488,58 @@ in
 
       pxe_uri=$(sed 's/ /\n/g' /proc/cmdline | grep '^pxe_uri=' | cut -d= -f2 || true)
       base=''${pxe_uri:-http://carbide-static-pxe.forge}
-      # Must match what the loader fetched, including the newrootfs= override,
-      # or this compares the published default against an image the machine
-      # never booted and reboots in a loop.
+
+      # Derived exactly as the loader derives it, newrootfs= override included,
+      # or this compares against an image the machine never booted.
       url=$(sed 's/ /\n/g' /proc/cmdline | grep '^newrootfs=' | cut -d= -f2- | tail -1 || true)
       if [ -z "$url" ] || [ "$url" = "none" ]; then
         url="$base/public/blobs/internal/$(uname -m)/scout.squashfs"
       fi
 
-      current=$(curl -sf --head "$url" | sed 's/\r//' | grep -i '^Last-Modified:' || true)
-      if [ -z "$current" ]; then
-        echo "unable to read Last-Modified for $url" >&2
+      cache="$base/public/blobs/internal/$(uname -m)/cache"
+      published=$(curl -sf "''${url%.squashfs}.nixos-system" || true)
+      if [ -z "$published" ]; then
+        echo "unable to read the published system path for $url" >&2
         exit 1
       fi
 
-      mkdir -p /run/forge
-      if [ ! -f "$STATE" ]; then
-        echo "$current" > "$STATE"
-        echo "recorded booted image as: $current"
+      running=$(readlink -f /run/current-system)
+      if [ "$running" = "$published" ]; then
         exit 0
       fi
 
-      if [ "$current" != "$(cat "$STATE")" ]; then
-        echo "newer scout available, rebooting"
+      echo "newer scout published: $published (running $running)"
+
+      # Fetch only what this machine is missing. The store database, loaded at
+      # boot by register-nix-paths, is what lets nix skip everything already
+      # present — for an agent-only rebuild that is a handful of paths rather
+      # than the whole 1.4 GB image.
+      #
+      # --no-check-sigs because the cache is unsigned today. Once a carbide
+      # signing key exists, drop this and add the public key to
+      # nix.settings.trusted-public-keys.
+      if ! nix --extra-experimental-features nix-command \
+             copy --no-check-sigs --from "$cache" "$published"; then
+        echo "unable to fetch $published from $cache; rebooting instead" >&2
         systemctl reboot
+        exit 0
       fi
+
+      # A new kernel or initrd cannot be activated in place. Comparing against
+      # /run/booted-system rather than /run/current-system is deliberate: it
+      # answers "does what is running on the CPU differ", which stays correct
+      # across an earlier live switch.
+      if [ "$(readlink -f /run/booted-system/kernel)" != "$(readlink -f "$published/kernel")" ] ||
+         [ "$(readlink -f /run/booted-system/initrd)" != "$(readlink -f "$published/initrd")" ]; then
+        echo "kernel or initrd changed; rebooting to activate"
+        systemctl reboot
+        exit 0
+      fi
+
+      # Restarts every unit whose definition changed. forge-scout.service names
+      # the agent by store path, so a new agent is a changed unit and gets
+      # restarted without anything having to declare that dependency.
+      "$published"/bin/switch-to-configuration switch
     '';
   };
 

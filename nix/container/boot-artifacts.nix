@@ -16,6 +16,12 @@
 # supplied by the container builder, the same way machine-validation-config
 # gets one; see nix/services/default.nix.
 #
+# No apt repo and no forge-scout deb. Those exist to install the agent into the
+# mkosi scout initramfs; a machine booting from this payload gets the NixOS
+# scout, where the agent is a package in the closure and updates arrive through
+# the binary cache below. nix/deb/debs.nix still builds the deb for the mkosi
+# path until that is retired — it is just not published here.
+#
 # What this removes is the staging round-trip. Today the artifacts are built,
 # installed into pxe/static/blobs/internal by cargo-make tasks, and then a
 # Dockerfile copies that directory in — so the image's contents depend on
@@ -35,31 +41,35 @@
   # scout-store: the squashfs the loader fetches, and the toplevel path that
   # names the system inside it. Both or neither — see nix/os/scout-store.nix.
   scoutStore ? null,
-  # forge-scout .deb, published through a minimal apt repo the scout initramfs
-  # installs from. Optional: an image without it is still a valid carrier.
-  scoutDeb ? null,
+  # The evaluated scout system. Published as a binary cache beside the
+  # squashfs so a running scout can fetch a new closure incrementally rather
+  # than refetching the whole image. Optional: without it the payload still
+  # serves cold boots and check-scout-updates falls back to rebooting.
+  scoutSystem ? null,
 }:
 
 let
   inherit (pkgs) lib;
 
-  # Written as a file rather than a heredoc in the build script: the script is
-  # an indented Nix string, and a `<<EOF` terminator has to sit at column zero,
-  # so any reformatting of this file would silently produce an unterminated
-  # heredoc.
-  aptRelease = pkgs.writeText "Release" ''
-    Origin: Ubuntu
-    Label: Ubuntu
-    Suite: focal
-    Codename: focal
-    Architectures: amd64
-    Components: main
-  '';
+  # A flat-file binary cache — the same shape `nix copy --to file://` produces,
+  # and usable as a substituter with the file:// or http:// prefix.
+  #
+  # `nix copy` cannot be used here: it is a store-to-store operation and needs
+  # a store database to decide which paths are valid, which a build sandbox
+  # does not have. mkBinaryCache gets the closure through
+  # exportReferencesGraph, which Nix supplies to the builder directly, so it
+  # works where nix copy does not.
+  #
+  # zstd is the default and matters: the uncompressed cache is about the size
+  # of the squashfs again, and this webroot already carries both.
+  scoutCache = pkgs.mkBinaryCache {
+    name = "scout-cache-${arch}";
+    rootPaths = [ scoutSystem ];
+  };
 in
 
 pkgs.runCommand "boot-artifacts-${arch}"
   {
-    nativeBuildInputs = lib.optionals (scoutDeb != null) [ pkgs.dpkg ];
     meta.description = "Boot artifacts payload for ${arch}";
   }
   ''
@@ -77,20 +87,10 @@ pkgs.runCommand "boot-artifacts-${arch}"
       install -m 0644 ${scoutStore}/scout-store.nixos-system $out/${arch}/scout.nixos-system
     ''}
 
-    ${lib.optionalString (scoutDeb != null) ''
-      # The scout initramfs installs forge-scout with apt, so the deb has to be
-      # reachable through a repository rather than as a loose file. This is the
-      # smallest thing dpkg-scanpackages will accept: one pool, one suite, no
-      # signing — the repo is served over the provisioning network only, and
-      # the initramfs trusts it explicitly.
-      poolDir=$out/apt/pool/base/f/forge-scout
-      distDir=$out/apt/dists/focal/main/binary-amd64
-      mkdir -p "$poolDir" "$distDir"
-
-      install -m 0644 ${scoutDeb}/*.deb "$poolDir/"
-
-      cd $out/apt
-      dpkg-scanpackages --arch amd64 -m pool > "$distDir/Packages"
-      install -m 0644 ${aptRelease} dists/focal/Release
+    ${lib.optionalString (scoutSystem != null) ''
+      # Copied rather than symlinked, for the same reason as the squashfs: this
+      # tree is served over HTTP and every hop has to dereference correctly.
+      cp -r --no-preserve=mode ${scoutCache} $out/${arch}/cache
     ''}
+
   ''
