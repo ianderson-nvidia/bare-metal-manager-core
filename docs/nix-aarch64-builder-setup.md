@@ -7,6 +7,78 @@ Single-builder setup. For multi-builder pools and parallelism, see
 [SESSION.md](../SESSION.md)'s "Distributed builds — multi-builder
 pool" section.
 
+## Do you need this?
+
+A builder is optional. There are three ways to produce an aarch64 image,
+and they differ in what they cost rather than in what they produce:
+
+| | invocation | needs | substitutes from cache.nixos.org |
+|---|---|---|---|
+| Remote builder | `just image-aarch64 <name>` | this guide | yes |
+| binfmt emulation | `just image-aarch64 <name>` | `qemu-user-static` + `extra-platforms` | yes |
+| Cross-compile | `just image-aarch64-cross <name>` | nothing | **no** |
+
+The first two build the *same* derivations — the ones nixpkgs' Hydra has
+already built for aarch64 — so the whole base arrives prebuilt and only
+carbide's own packages are compiled. Cross-compiling produces different
+store paths that nobody upstream has ever built, so glibc, gcc, systemd
+and the kernel are compiled from source every time the store is empty.
+
+Prefer a builder or binfmt. Cross-compiling is the fallback for working
+offline or with no aarch64 execution available at all.
+
+### binfmt, if you would rather not run a builder
+
+Two things are needed, and having the binfmt handlers registered is only
+the first. Install `qemu-user-static` (or your distribution's equivalent),
+then tell Nix it is *allowed* to build for the platform — registered
+handlers alone are not enough, and without this you get:
+
+```
+error: Cannot build '/nix/store/....drv'.
+       Reason: platform mismatch
+       Required system: 'aarch64-linux'
+       Current system: 'x86_64-linux'
+```
+
+A trusted user (`trusted-users` in `/etc/nix/nix.custom.conf`) can set it
+in `~/.config/nix/nix.conf`; otherwise it goes in the system config:
+
+```
+extra-platforms = aarch64-linux i686-linux x86_64-v1-linux x86_64-v2-linux x86_64-v3-linux x86_64-v4-linux
+```
+
+The trailing entries are Nix's auto-detected defaults on an x86_64 host,
+not previous configuration — `extra-platforms` replaces rather than
+appends, so restate them. Note that `nix config show extra-platforms`
+reports the client's view, so verify by building rather than by reading:
+
+```
+nix build --impure --expr \
+  '(import <nixpkgs> { system = "aarch64-linux"; }).runCommand "p" {} "uname -m > $out"'
+```
+
+The output should contain `aarch64`, and the log should show the aarch64
+stdenv being *copied from cache.nixos.org* rather than built — that is the
+property that makes emulation cheap.
+
+`--extra-platforms aarch64-linux` on the command line does the same thing
+for a one-off, which is the quickest way to confirm the setup works before
+making it permanent.
+
+Emulated compilation runs roughly 5–20× slower than native, but that
+only applies to what actually has to be built — the kernel is downloaded,
+not emulated. A small number of packages misbehave under `qemu-user`;
+those are the case for a real builder.
+
+On NixOS the equivalent is `boot.binfmt.emulatedSystems = [ "aarch64-linux" ];`.
+
+### Removing a builder
+
+A `builders =` line naming a host that no longer exists does not fail
+gracefully — aarch64 builds try to offload to a dead address. Delete the
+line from `/etc/nix/nix.custom.conf` when decommissioning the instance.
+
 > **Determinate Nix config layout:** This guide assumes you're using
 > Determinate Nix (the installer used below). Determinate splits its
 > config across two files:

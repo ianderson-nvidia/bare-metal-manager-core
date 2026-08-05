@@ -168,18 +168,67 @@ boot-inputs: _check-nix ipxe deb-scout
     @echo "  result-forge-scout-deb-amd64/ result-forge-scout-deb-arm64/"
     @echo "  result-carbide-scout-aarch64/"
 
-# scout-store.nixos-system names the system inside the squashfs and has to
-# travel with it — the loader reads it to decide what to soft-reboot into.
-# Stage both into the webroot with:
+# scout ships as three files that have to travel together: the kernel, its
+# initrd, and the command line naming which system to activate. Stage them
+# into the webroot with:
 #
 # cargo make --cwd pxe scout-x86_64-from-nix
 #
-# Build both halves of scout: the loader, and the rootfs the loader fetches.
+# Build both halves of scout: the loader, and the system the loader kexecs into.
 scout: _check-nix
     nix build .#scout-loader -o result-scout-loader
-    nix build .#scout-store  -o result-scout-store
+    nix build .#scout-kexec  -o result-scout-kexec
     @echo "loader:  $(stat -c %s result-scout-loader/scout-loader.efi | numfmt --to=iec)"
-    @cat result-scout-store/sizes.txt
+    @cat result-scout-kexec/sizes.txt
+
+# Unlike scout this is a single self-contained UKI: iPXE chains it directly, so
+# there is no loader stage and nothing to fetch at boot. Stage it with:
+#
+# cargo make --cwd pxe qcow-imager-x86_64-from-nix
+#
+# Build the qcow imager, which writes a customer image onto local disk.
+qcow-imager: _check-nix
+    nix build .#qcow-imager -o result-qcow-imager
+    @echo "qcow-imager: $(stat -c %s result-qcow-imager/qcow-imager.efi | numfmt --to=iec)"
+
+# ==============================================================================
+# aarch64 boot images
+#
+# One recipe, because Nix already does the host-appropriate thing. These are
+# ordinary `aarch64-linux` derivations, so the daemon realises them whichever
+# way it can: natively on an aarch64 runner, under binfmt/qemu on an x86 box,
+# or offloaded to a remote builder if one is configured
+# (docs/nix-aarch64-builder-setup.md). Nothing here has to detect the host.
+#
+# On x86 this needs `extra-platforms = aarch64-linux` in nix.conf, or a
+# builder. Without either it fails with "platform mismatch" rather than
+# falling back — deliberately, since a silent fallback to cross-compiling
+# would produce different store paths on different machines.
+#
+# What that buys is cache hits. nixpkgs' Hydra builds aarch64 natively, so
+# these are the paths that exist in cache.nixos.org — the kernel, glibc, gcc
+# and systemd all arrive prebuilt, and only carbide's own packages are built
+# locally. Emulation is therefore far cheaper than the usual 5-20x figure
+# suggests: the expensive things are downloaded, not emulated.
+# ==============================================================================
+
+# Build an aarch64 image, e.g. `just image-aarch64 qcow-imager`.
+image-aarch64 name: _check-nix
+    nix build ".#packages.aarch64-linux.{{ name }}-aarch64" -o "result-{{ name }}-aarch64"
+
+# Escape hatch, not an alternative. Cross-compiling produces *different store
+# paths* — nobody upstream has ever built them, so nothing substitutes and the
+# whole aarch64 world compiles from source on every empty store. It earns its
+# keep in exactly two cases: no aarch64 execution available at all (no qemu,
+# no builder), or a compile-bound image on a machine with many x86 cores,
+# where native-speed compilation beats emulated compilation.
+#
+# Do not reach for this to "fix" a failing image-aarch64 — a silent switch
+# between the two is what fragments the cache.
+#
+# Build an aarch64 image by cross-compiling from this host.
+image-aarch64-cross name: _check-nix
+    nix build ".#{{ name }}-aarch64" -o "result-{{ name }}-aarch64"
 
 # Replaces dev/docker/Dockerfile.release-artifacts-x86_64, which COPYs whatever
 # happens to be staged in pxe/static/blobs/internal. This is assembled from the
@@ -205,6 +254,15 @@ sbom service: _check-nix
 # echo ...`), so making it a hard dependency here would be stricter than the
 # behaviour this replaces.
 # ==============================================================================
+
+# Builds every aarch64 binary, so it is slower than the lints and is kept out
+# of `lint-ci` for that reason. It replaces the cargo-make task
+# check-aarch64-release-container-services-page-size, which only inspected
+# whatever a previous cargo build had left in target/.
+#
+# Run the flake's checks: aarch64 binaries must map on a 64KB-page kernel.
+flake-check: _check-nix
+    nix flake check
 
 # Run the full lint suite. Mirrors the lint-police CI job.
 lint-ci: clippy carbide-lints lint-error-messages check-format check-workspace-deps check-event-names check-metric-docs check-licenses check-bans

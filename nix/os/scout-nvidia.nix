@@ -17,7 +17,9 @@
 
 let
   # NVIDIA's published DCGM packages, carrying the cuda13 plugin set.
-  dcgm = import ../third-party/dcgm-deb.nix { inherit pkgs; };
+  # As with MFT, the architecture is selected by which package set calls this,
+  # not by an argument.
+  dcgm = pkgs.callPackage ../third-party/dcgm-deb.nix { };
 
   # Internode Memory Exchange. Kept in lockstep with the driver — see the
   # branch note below for why the scope is pinned rather than left at the
@@ -57,8 +59,15 @@ in
   # dc_* datacenter package. 590 is the newest branch where all three pieces
   # are aligned on a datacenter driver.
   # ==========================================================================
+  # Not `config.boot.kernelPackages.nvidiaPackages.dc_590` directly: that
+  # declaration is x86_64-only, and its fabricmanager cannot be built for
+  # aarch64 at all. nix/os/nvidia-driver.nix re-declares the same driver with
+  # the three aarch64 inputs nixpkgs is missing; on x86_64 it is byte-identical
+  # to dc_590 apart from a fabricmanager src that resolves to the same file.
   hardware.nvidia.datacenter.enable = true;
-  hardware.nvidia.package = config.boot.kernelPackages.nvidiaPackages.dc_590;
+  hardware.nvidia.package = pkgs.callPackage ../os/nvidia-driver.nix {
+    kernelPackages = config.boot.kernelPackages;
+  };
 
   # The open kernel modules, matching the mkosi profile's
   # nvidia-driver-580-open / nvidia-dkms-580-open. They are the supported

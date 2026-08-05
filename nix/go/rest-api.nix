@@ -1,5 +1,9 @@
 {
   pkgs,
+  # aarch64 package set, used for the arm64 binaries. Architecture has to come
+  # from the package set rather than from an environment variable — see
+  # mkGoBinary below for why.
+  crossPkgs,
   # Default image tag — typically the git revision of the workspace.
   version,
   # The build host's system string, used to select the native GOARCH for
@@ -35,21 +39,48 @@ let
       pname,
       subPackage, # path relative to rest-api/, e.g. "api/cmd/api"
       binaryName ? null, # filename inside $out/bin; defaults to baseNameOf subPackage
-      goarch ? "amd64", # "amd64" or "arm64"
+      # The package set to build with. This is what selects the target
+      # architecture: buildGoModule derives GOOS/GOARCH from its own `go`,
+      # which follows the package set's platform.
+      #
+      # Setting env.GOARCH here does nothing at all. nixpkgs'
+      # pkgs/build-support/go/module.nix ends with
+      #
+      #     env = args.env or { } // { inherit (go) GOOS GOARCH; };
+      #
+      # so anything the caller passes is overwritten unconditionally. That is
+      # worth stating explicitly because the failure is silent: the build
+      # succeeds, the attribute is still named -aarch64, and the binary inside
+      # is amd64.
+      buildPkgs ? pkgs,
     }:
     let
       defaultName = baseNameOf subPackage;
       outName = if binaryName == null then defaultName else binaryName;
     in
-    pkgs.buildGoModule {
+    buildPkgs.buildGoModule {
       inherit pname version src vendorHash;
       subPackages = [ subPackage ];
 
-      # Static + no libc dep. Same flags rest-api/Makefile uses for production.
+      # Static + no libc dep, matching what rest-api/Makefile produces for
+      # production. CGO off is also what keeps cross-compiling free: no C
+      # toolchain is involved, so the cross package set costs nothing beyond a
+      # different go.
       env.CGO_ENABLED = "0";
-      env.GOOS = "linux";
-      env.GOARCH = goarch;
-      ldflags = [ "-extldflags '-static'" ];
+
+      # `-linkmode internal` rather than the Makefile's `-extldflags '-static'`.
+      # With CGO disabled the external linker never runs, so -extldflags is
+      # inert — it described the intent without enforcing it, and on a cross
+      # build it actively broke things: it pulled in the external linker, which
+      # then failed on `cannot find -lc` because there is no static aarch64
+      # libc. Asking for internal linking says the same thing in a way that
+      # holds on both architectures.
+      #
+      # Without it, cross builds come out *dynamically* linked against a
+      # /nix/store glibc, because nixpkgs' Go cross setup exports GO_LDSO and
+      # Go then emits a PT_INTERP. That still runs inside an image built from
+      # the closure, so it fails quietly rather than loudly.
+      ldflags = [ "-linkmode internal" ];
 
       # buildGoModule names the output after the last path component of
       # subPackage (e.g. "api/cmd/api" → bin/api). Rename when the Makefile
@@ -92,13 +123,17 @@ let
     }
   ];
 
-  # Build the full set of rest-api binaries for one GOARCH.
+  # Build the full set of rest-api binaries for one GOARCH. The goarch string
+  # is kept as the caller-facing name because that is what the container specs
+  # in flake.nix speak, but it only selects a package set.
+  pkgsForGoarch = goarch: if goarch == "arm64" then crossPkgs else pkgs;
+
   binariesFor =
     goarch:
     pkgs.lib.listToAttrs (
       map (spec: {
         name = spec.pname;
-        value = mkGoBinary (spec // { inherit goarch; });
+        value = mkGoBinary (spec // { buildPkgs = pkgsForGoarch goarch; });
       }) buildSpec
     );
 

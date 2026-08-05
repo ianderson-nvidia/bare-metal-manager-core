@@ -663,28 +663,51 @@ script = '''
 
 [tasks.scout-x86_64-from-nix]
 category = "Ephemeral Image"
-description = "Stage the Nix-built scout root filesystem into the static webroot"
-# Replaces mkosi-build-scout-x86_64. The loader is unchanged and still fetches
-# scout.squashfs over HTTP, measures it into the TPM and soft-reboots into it.
+description = "Stage the Nix-built scout kernel, initrd and command line into the static webroot"
+# Replaces mkosi-build-scout-x86_64. The loader fetches these over HTTP,
+# measures the initrd into the TPM and kexecs into it.
 #
-# scout.nixos-system carries the store path of the system inside the squashfs.
-# NixOS keeps only /nix/store in the image and builds the rest of the root at
-# boot, so the loader needs to be told which toplevel to start; the two files
-# are staged together because they are only meaningful as a pair.
+# Three files, staged together because none of them is meaningful alone: the
+# initrd carries the Nix store, the kernel has to be the one those modules were
+# built against, and the command line names which toplevel to activate. That
+# last one is why a bare image is not enough — a NixOS store can hold several
+# systems and nothing in the image says which to start.
 #
-# Produced by `just scout` (or `nix build .#scout-store -o result-scout-store`).
+# Produced by `just scout` (or `nix build .#scout-kexec -o result-scout-kexec`).
 # install -m 0644 rather than cp because /nix/store files are 0444 and cp
 # preserves that, breaking the second run.
 dependencies = ["mkdir-static"]
 script = '''
-  install -m 0644 -L ${REPO_ROOT}/result-scout-store/scout-store.squashfs \
-     ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/scout.squashfs
-  install -m 0644 ${REPO_ROOT}/result-scout-store/scout-store.nixos-system \
-     ${REPO_ROOT}/pxe/static/blobs/internal/x86_64/scout.nixos-system
+  for f in kernel initrd cmdline; do
+    install -m 0644 -L "${REPO_ROOT}/result-scout-kexec/scout.$f" \
+       "${REPO_ROOT}/pxe/static/blobs/internal/x86_64/scout.$f"
+  done
 
   echo "Staged:"
-  echo "  pxe/static/blobs/internal/x86_64/scout.squashfs"
-  echo "  pxe/static/blobs/internal/x86_64/scout.nixos-system"
+  echo "  pxe/static/blobs/internal/x86_64/scout.kernel"
+  echo "  pxe/static/blobs/internal/x86_64/scout.initrd"
+  echo "  pxe/static/blobs/internal/x86_64/scout.cmdline"
+'''
+
+[tasks.qcow-imager-x86_64-from-nix]
+category = "qcow-imager"
+description = "Stage the Nix-built qcow-imager UKI into the static webroot"
+# Replaces mkosi-build-qcow-imager plus mkosi-copy-qcow-imager-to-webroot-x86_64.
+#
+# One file, unlike scout: the imager is chained directly by iPXE rather than
+# fetched by a loader, so the kernel, initrd and command line are all sealed
+# inside the UKI. crates/ipxe-renderer/templates.yaml names it
+# internal/${arch}/qcow-imager.efi, which is why the destination is fixed.
+#
+# Produced by `just qcow-imager` (or
+# `nix build .#qcow-imager -o result-qcow-imager`).
+dependencies = ["mkdir-static"]
+script = '''
+  install -m 0644 -L "${REPO_ROOT}/result-qcow-imager/qcow-imager.efi" \
+     "${REPO_ROOT}/pxe/static/blobs/internal/x86_64/qcow-imager.efi"
+
+  echo "Staged:"
+  echo "  pxe/static/blobs/internal/x86_64/qcow-imager.efi"
 '''
 
 [tasks.ipxe-config]

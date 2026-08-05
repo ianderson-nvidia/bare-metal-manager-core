@@ -21,15 +21,19 @@
 # before measured boot becomes enforcing, because the per-machine parameters
 # are what would silently stop arriving.
 {
-  pkgs,
-  # An evaluated NixOS configuration; supplies system.build.*.
+  # An evaluated NixOS configuration; supplies system.build.* and the package
+  # set the image is built from.
   nixosSystem,
   # Bare name of the output, e.g. "scout" -> scout.efi.
   name,
 }:
 
 let
-  inherit (nixosSystem) config;
+  # pkgs comes from the system rather than as an argument. Taking both invites
+  # them to disagree, and the failure is silent: a native pkgs with a
+  # cross-built system picks the x86 stub for an aarch64 kernel, producing a
+  # UKI the firmware rejects without saying why.
+  inherit (nixosSystem) config pkgs;
 
   # netbootRamdisk is the initrd with the store squashfs inside it, so the
   # machine needs nothing beyond this one file.

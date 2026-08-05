@@ -174,9 +174,41 @@ of `nvidia-imex.nix` and `mft.nix` (URL switching), plus the
   `aarch64-linux-gnu-objcopy` (in `pkgs.pkgsCross.aarch64-multiplatform.binutils`)
   or run inspection on an aarch64 host. `file scout.efi` works
   cross-arch and confirms the file type / target arch.
-- `restApiVendorHash` in `flake.nix` is still `pkgs.lib.fakeHash`, so
-  the exposed rest-api Go binary/container package attrs evaluate but
-  won't build until the real vendor hash is captured.
+- `carbide-dhcp` cannot be cross-compiled for aarch64: it links against
+  Kea, and nixpkgs' Kea builds with meson, which aborts with "Can not
+  run test applications in this cross environment". This is why
+  `carbide-dhcp-container-arm64` and `forge-dhcp-server-container-arm64`
+  fail, and why `carbide-dhcp` is named in the `skip` list of the
+  `aarch64-page-size` check in `flake.nix`. Fixing Kea means deleting
+  that entry.
+- A stale `restApiVendorHash` breaks every rest-api Go binary, and the
+  breakage is invisible to anything short of a build: the attrs still
+  *evaluate*, so `nix flake show` and any eval-only check pass green
+  while all 22 binaries and their containers fail to realise. Worth
+  remembering whenever "the flake evaluates" is offered as evidence.
+- `env.GOARCH` does nothing in `buildGoModule`. nixpkgs'
+  `pkgs/build-support/go/module.nix` ends with
+
+      env = args.env or { } // { inherit (go) GOOS GOARCH; };
+
+  so the caller's value is overwritten unconditionally, and the target
+  architecture can only be selected by choosing the package set. This is
+  a silent failure: the build succeeds, the attribute is still called
+  `-aarch64`, and the binary inside is amd64. Architecture must come from
+  `pkgsCross`, the same way the Rust and third-party derivations do it.
+- `-extldflags '-static'` is inert when `CGO_ENABLED=0`, because the
+  external linker never runs. It reads as enforcing static linkage while
+  enforcing nothing, and on a cross build it does harm: it drags in the
+  external linker, which fails with `cannot find -lc` since there is no
+  static aarch64 libc. `-linkmode internal` is the flag that actually
+  expresses the requirement on both arches. Note the fallback is quiet —
+  drop the flag entirely and cross builds come out dynamically linked
+  against a `/nix/store` glibc, which still works inside an image built
+  from the closure.
+- The `aarch64-page-size` check covers only the Rust aarch64 binaries,
+  matching the cargo-make task it replaces. The Go binaries were measured
+  by hand and are fine (`page_size=0x10000`), but they are not wired into
+  the check.
 - `pxe/common_files/scout-loader-rclocal` is the tracked source-of-
   truth for the loader's rc.local; the per-arch destinations under
   `pxe/mkosi.profiles/scout-loader-{x86_64,aarch64}/mkosi.extra/etc/rc.local`
@@ -233,10 +265,342 @@ of `nvidia-imex.nix` and `mft.nix` (URL switching), plus the
   to `cargo --package` and should be updated while retaining any desired
   public Nix attribute aliases.
 
+## Resolved: scout is kexec'd, not soft-rebooted into
+
+The two-stage design is intact, but the hand-off is now kexec. Established by
+QEMU boot tests, in the order the failures surfaced — all three are worth
+knowing, because each is silent:
+
+1. `systemctl soft-reboot` **ignores** `/run/nextroot` unless it validates as
+   an OS tree, logging only at debug level:
+
+       Failed to determine if /run/nextroot/ is a valid OS tree, ignoring
+
+   and then soft-reboots the *current* system. The machine comes back healthy
+   in the loader, so it reads as a failed fetch rather than a failed pivot.
+   Validation wants an `os-release`, and it must be a real file: the check runs
+   pre-pivot, where an absolute `/nix/store` symlink still resolves against the
+   loader's root.
+2. Past that, PID 1 freezes with `Failed to open serialization fd`. nixpkgs
+   patches systemd to re-exec from `/run/current-system/systemd/lib/systemd/systemd`,
+   and soft-reboot preserves `/run` — so post-pivot that names the *loader's*
+   toplevel, absent from the store just mounted.
+3. Past that, systemd starts and dies on `Unit default.target not found`. This
+   is the design, not a bug: `system.build.squashfsStore` holds only
+   `/nix/store`. The units are all *there* — `forge-scout`, `getty.target`,
+   `nv-hostengine` are in the store's `etc` closure — but `/etc` is
+   *materialised* by `$toplevel/activate`, which runs from stage 1. Nothing is
+   missing from the image; something has to run against it.
+
+`system.etc.overlay.enable` is not a way out either: the remount is done by a
+systemd mount unit or the activation script, both of which need `/etc` to be
+reachable already.
+
+The deciding argument was not boot time but kernels. A soft-reboot never
+restarts the kernel, so scout would have run on the *loader's* kernel and never
+its own. Both configurations happen to resolve to the same store path today,
+but that is a coincidence of taking the default kernel with the same config —
+and it breaks where this port is heading, since the aarch64 profile wants a
+64K-page Grace kernel (`linux-nvidia-64k-hwe-24.04` in mkosi) that the loader
+has no reason to carry. Scout's NVIDIA modules are built against one specific
+version. Under kexec the kernel and its modules always ship together.
+
+Verified end to end in QEMU: loader boots, fetches, measures, `kexec`s, and
+scout comes up with sshd, lldpd, networkd, DCGM `nv-hostengine`, IMEX and the
+update timer, reaching `scout login:`. `nvidia-fabricmanager` is the only
+failing unit, having no NVSwitch to talk to in a VM.
+
+Costs and unknowns carried forward:
+
+- kexec skips firmware entirely — no POST, no memory training — but does
+  re-initialise every driver. In QEMU scout reached a login prompt at 12.7s;
+  the real cost on a GPU node with many NVMe and ConnectX devices has not been
+  measured.
+- The 1.4 GB initrd must be resident while the old kernel is still running.
+- kexec is not always reliable on server firmware with IOMMU enabled and GPUs
+  bound. Only real hardware will settle that.
+
+## aarch64 cross-building works, but never hits the public cache
+
+`nix build .#qcow-imager-aarch64` completes from an x86 host and produces a
+valid ARM64 UKI (479 MB, `PE32+ … ARM64`), kernel and all. No cross-compile
+failure anywhere in the closure. That was the biggest unmeasured risk in the
+aarch64 plan and it is now settled for the UKI roles; scout still needs the
+`dc_590` override before it can be tried.
+
+It also confirms the `uki.nix` change from Phase 0 was load-bearing: the
+output is an ARM64 PE, so `efiArch` resolved to `linuxaa64.efi.stub`. With the
+old signature — `pkgs` as a parameter alongside a cross-built system — this
+would have produced an x86-64 stub wrapping an aarch64 kernel, which firmware
+rejects without explanation.
+
+**The cost is that cross-compiling defeats `cache.nixos.org` completely.**
+Hydra builds aarch64 natively, so the cross derivation of the same software is
+a different store path that nobody upstream has ever built:
+
+    cross-built   v3gblfy4…-linux-aarch64-unknown-linux-gnu-6.18.39   404
+    native        68bgfsqv…-linux-6.18.39                             200
+
+Same kernel version, same nixpkgs. This is not a first-build cost: nothing in
+the aarch64 closure — kernel, glibc, gcc, systemd — will ever substitute from
+the public cache, on any machine, ever. Every fresh store pays for the whole
+aarch64 world from source.
+
+So `just image-aarch64 <name>` builds `packages.aarch64-linux.*` and is the
+canonical path. No host detection is needed anywhere: these are ordinary
+`aarch64-linux` derivations, and Nix already realises them whichever way the
+host allows — natively on an arm64 runner, under binfmt on x86, or offloaded
+to a remote builder. One recipe covers CI and every developer machine.
+
+Two things are needed for the binfmt route, and registered handlers are only
+the first. Nix must also be *allowed* to build for the platform:
+
+    extra-platforms = aarch64-linux i686-linux x86_64-v1-linux ...
+
+Without it, an `aarch64-linux` derivation fails with "platform mismatch —
+Required system: 'aarch64-linux', Current system: 'x86_64-linux'" even with
+`qemu-user-static` installed and binfmt registered. Confirmed by A/B on the
+same derivation: fails without `--extra-platforms aarch64-linux`, builds and
+runs with it. `nix config show extra-platforms` reports the client's view
+rather than what the daemon accepts, so verify by building, not by reading.
+
+`image-aarch64-cross` remains as an escape hatch, not an alternative. It earns
+its keep only when there is no aarch64 execution available at all, or for a
+compile-bound image where native-speed x86 compilation beats emulated
+compilation. Reaching for it to work around a failing native build is what
+fragments the cache.
+
+The native attrs are ordinary `aarch64-linux` derivations, so they run on a
+remote builder or under binfmt, and the base arrives prebuilt — the kernel is
+downloaded rather than emulated, which is why emulation is much cheaper here
+than the 5–20× figure suggests. The cross attrs need nothing but produce store
+paths no cache will ever hold.
+
+Native is canonical: CI runs on `linux-arm64-*` runners where it is simply the
+native build, and developers with a builder or binfmt share those exact paths,
+so one cache serves everyone. Cross stays as the fallback for working offline
+or with no aarch64 execution available.
+
+The consequence to keep in mind is that the two are *different store paths*. A
+cache populated by CI's native builds will never serve someone's cross builds.
+That is inherent, not a bug, and it is the reason to steer people at the native
+path rather than letting the choice drift.
+
+`docs/nix-aarch64-builder-setup.md` is therefore not obsolete — it is the
+runbook for one of the two routes, and now also documents the binfmt
+alternative and how to decommission a builder cleanly. A `builders =` line
+naming a deleted host does not fail gracefully; aarch64 builds try to offload
+to a dead address.
+
+## aarch64 GPU stack: IMEX is fine, fabricmanager is broken two ways
+
+Checked before writing the `dc_590` aarch64 override, because both of these
+fail on real GPU hardware rather than at build time.
+
+**IMEX — no problem.** `cudaPackages_13_1.imex` resolves for aarch64 to
+`.../redist/imex/linux-sbsa/imex-linux-sbsa-590.48.01-archive.tar.xz`, which
+exists upstream, at the version that matches `dc_590`. The version assertion
+in `scout-nvidia.nix` needs no arch guard and aarch64 scout keeps IMEX.
+
+**fabricmanager — two separate bugs in nixpkgs, and the loud one hides the
+quiet one.**
+
+`pkgs/os-specific/linux/nvidia-x11/fabricmanager.nix` derives both its
+download path and its ELF interpreter by reversing `stdenv.system`:
+
+    sys  = linux-aarch64          (from aarch64-linux)
+    bsys = linux-aarch64
+
+1. **The source 404s.** NVIDIA publishes the aarch64 server build under
+   `linux-sbsa`, not `linux-aarch64` — the same naming split as the DCGM
+   repo. Measured:
+
+       404  .../fabricmanager/linux-aarch64/fabricmanager-linux-aarch64-590.48.01-archive.tar.xz
+       206  .../fabricmanager/linux-sbsa/fabricmanager-linux-sbsa-590.48.01-archive.tar.xz
+
+2. **The interpreter does not exist.** The install phase runs
+   `patchelf --set-interpreter ${stdenv.cc.libc}/lib/ld-${bsys}.so.2`, giving
+   `ld-linux-aarch64.so.2`. aarch64 glibc ships only `ld-linux-aarch64.so.1`
+   (verified against the aarch64 `stdenv.cc.libc`). patchelf accepts a
+   non-existent interpreter without complaint, so the build would succeed and
+   the binary would fail at exec with a misleading `No such file or directory`.
+   On x86_64 the same expression yields `ld-linux-x86-64.so.2`, which is
+   correct — hence nobody has noticed.
+
+Bug 1 masks bug 2: the fetch fails before anything can be patched. Fixing only
+the URL produces a fabricmanager that builds and cannot run — confirmed, not
+predicted: with the sbsa URL in place the build got as far as
+`versionCheckHook` and died with
+
+    qemu-aarch64-static: Could not open '.../ld-linux-aarch64.so.2': No such file or directory
+
+**A third trap sits on top of the fix.** `fabricmanager.nix` sets
+`dontFixup = true` (its comment cites stdenv shrinking leaving undefined
+symbols in these prebuilt binaries), so a `postFixup` hook never runs at all —
+the phase log goes straight from `installPhase` to `installCheckPhase`. The
+correction has to hang off `postInstall`, which that file's `installPhase` does
+invoke, and which lands after the wrong interpreter is written and before
+anything tries to execute the binary.
+
+Both fixes live in `nix/os/nvidia-driver.nix`, applied only on aarch64 — the
+whole override is guarded rather than its contents, because setting
+`postInstall = ""` where the attribute was absent is itself enough to change a
+derivation hash. Verified: x86 `scout-kexec` keeps its exact store path, and
+the aarch64 fabricmanager builds with both binaries carrying
+`ld-linux-aarch64.so.1`. That build passing `versionCheckHook` is the proof it
+runs — the hook executes `nv-fabricmanager --version` under emulation.
+
+Both binaries matter to scout: `nv-fabricmanager` backs the
+`nvidia-fabricmanager` service, and `nvswitch-audit` is named directly in
+`scout-nvidia.nix`'s systemPackages. `nvidia-imex` and `nv-hostengine` are
+both ordered after fabricmanager, so a broken one stalls the GPU units rather
+than failing in isolation.
+
+## Signing the scout update cache: what it actually takes
+
+The `--no-check-sigs` in `nix/os/scout.nix` cannot be removed by adding a
+public key, which is what the comment there used to imply.
+
+The cache scout substitutes from is **not** the S3 build cache. It is the
+flat-file cache inside the boot-artifacts payload, served over HTTP from
+carbide-static-pxe, and it is built by `pkgs.mkBinaryCache`. That function has
+no signing support whatsoever — its `make-binary-cache.py` writes
+
+    StorePath URL Compression FileHash FileSize NarHash NarSize References
+
+and never a `Sig:` line. Pre-signing the store paths does not help either:
+`exportReferencesGraph`, which is how the derivation learns the closure,
+carries no signatures.
+
+Signing therefore has to happen outside a derivation, because
+`nix store sign` needs the private key and a derivation would put it in the
+store:
+
+    SCOUT=$(nix build --no-link --print-out-paths .#scout-kexec)
+    TOP=$(sed 's/ .*//; s|^init=||; s|/init$||' "$SCOUT/scout.cmdline")
+
+    nix store sign --key-file ./cache-priv.pem --recursive "$TOP"
+    rm -rf ./result-scout-cache
+    nix copy --to "file://$PWD/result-scout-cache?compression=zstd" "$TOP"
+
+then stage `result-scout-cache/` into the webroot like the other artifacts,
+drop `scoutCache`/`mkBinaryCache` from `nix/container/boot-artifacts.nix`, and
+in `scout.nix` set
+
+    nix.settings.trusted-public-keys = [ "nico-cache-1:..." ];
+
+and remove `--no-check-sigs`.
+
+This is the Phase 5 seam again — Nix produces artifacts, cargo-make assembles
+the payload — so it is not a new pattern, but it does give up the property
+`boot-artifacts.nix` was written for: that the payload cannot contain a stale
+artifact. A cache staged separately from the kernel and initrd beside it can
+drift, and the failure mode is bad: scout finds a newer toplevel published,
+fetches it, and the closure is not in the cache, so it reboot-loops. The
+staging task should assert the pair matches:
+
+    hash=$(basename "$TOP" | cut -d- -f1)
+    test -f "result-scout-cache/$hash.narinfo" \
+      || { echo "cache does not contain $TOP"; exit 1; }
+
+One line, and it turns a field reboot-loop into a build failure.
+
+Not urgent: it only pays off once scout does self-updates in anger. Until
+then `--no-check-sigs` against a cache served from carbide's own webroot is
+defensible.
+
+## aarch64 scout needs a 64K-page kernel, and it is not free
+
+Grace requires 64K pages. nixpkgs sets no arm64 page size at all — it takes the
+kernel defconfig, which is 4K — so `nix/os/scout.nix` overrides
+`ARM64_4K_PAGES`/`ARM64_64K_PAGES` for aarch64 only. The mkosi profile got the
+same thing by installing Ubuntu's `linux-nvidia-64k-hwe-24.04`.
+
+The cost is structural rather than incidental: a custom kernel config is a
+derivation nobody upstream builds, so it never substitutes.
+
+    200  68bgfsqv…-linux-6.18.39   default 4K kernel
+    404  8zrzkjav…-linux-6.18.39   64K kernel
+
+Under binfmt emulation that means compiling a kernel under qemu on every empty
+store. This is the strongest argument in the tree for a real aarch64 builder:
+with one, the kernel compiles once at native speed and then lands in our own
+cache for everyone else.
+
+Scoped to scout deliberately. The loader and qcow-imager keep the cached 4K
+kernel:
+
+    scout-kexec   8zrzkjav…  64K, built
+    scout-loader  68bgfsqv…  4K, substituted
+    qcow-imager   68bgfsqv…  4K, substituted
+
+**This retroactively settles the kexec-vs-soft-reboot decision.** A soft-reboot
+never restarts the kernel, so scout would have run on the loader's 4K kernel
+and 64K pages would have been unreachable without also rebuilding the loader on
+a custom kernel it has no use for. The argument made at the time was that
+soft-reboot silently pins scout to the loader's kernel; this is that argument
+becoming concrete.
+
+It also promotes the `aarch64-page-size` check in `flake.nix` from precaution
+to live defence — against a 64K kernel, 4K-aligned PT_LOAD segments genuinely
+fail to map.
+
+## Boot images are a matrix in nix/os/images.nix
+
+`nix/os/images.nix` is now the only file that enumerates architectures. Three
+roles — `scout-kexec`, `scout-loader`, `qcow-imager` — in two shapes: scout
+publishes kernel/initrd/cmdline, the other two are UKIs. flake.nix calls it
+once and merges the result into `packages`, so a new image or a newly
+buildable architecture needs no edit there.
+
+`targets` lists the roles each architecture can produce, rather than taking a
+full cross-product, because the product is not square: aarch64 scout does not
+evaluate today. `dc_590` omits `sha256_aarch64`, so nixpkgs declares it
+x86_64-only and evaluation fails with "unsupported system". Listing what each
+target can actually build keeps that a stated fact instead of a broken
+attribute that surfaces in CI. Adding scout to aarch64 is one word once the
+driver override lands.
+
+Verified as a pure refactor: `scout-loader`, `scout-kexec`, `qcow-imager` and
+`boot-artifacts-x86-64-container` all keep byte-identical store paths, and the
+aarch64 derivations match those produced by a hand-written evaluation before
+the file existed. `nixpkgs.buildPlatform` is only set when it differs from the
+build system, which is what keeps the native paths unchanged.
+
+## qcow-imager: ported for x86, mkosi profiles retained until aarch64 lands
+
+`nix/os/qcow-imager.nix` + `nix/os/uki.nix` replace the qcow-imager mkosi
+profiles. Booted under OVMF as a UKI, which is the first time `uki.nix` has
+been proven — the scout loader UKI shares that code path and had only ever
+been boot-tested as kernel+initrd.
+
+`disk_imaging.sh` runs unmodified and behaves correctly:
+
+    Working serial ports = [ttyS0 ttyAMA0]
+    Using serial port: [ttyS0] (0)
+    Could not resolve disk image to use from arguments in /proc/cmdline
+    Rebooting
+
+All sixteen commands it shells out to resolve in the unit's PATH, checked
+against the script rather than copied from the mkosi package list. `update-grub`
+is deliberately *not* among them: the script runs it as
+`chroot /mnt /bin/sh -c update-grub`, so it has to resolve inside the imaged
+filesystem — the customer's grub, for the customer's disk.
+
+`pxe/mkosi.profiles/qcow-imager{,-aarch64}` are deliberately still present.
+Deleting them now would leave the aarch64 imager unbuildable by either path
+until Phase 4 ports it; they go together with the aarch64 port, along with
+`stage-disk_imaging-script` and the `mkosi-*-qcow-imager*` tasks.
+
+The aarch64 profile's `mkosi.postinst.chroot` needs no counterpart — it gunzips
+Ubuntu's compressed arm64 vmlinuz so the UKI stub can use it, and NixOS builds
+an uncompressed `Image` on aarch64 that `uki.nix` picks up directly.
+
 ## mkosi → NixOS scout: state of the port
 
-Two flake targets mirror the two mkosi profiles. Both build; neither has
-booted.
+Two flake targets mirror the two mkosi profiles. Both build; the loader
+boots, fetches and measures correctly. The pivot does not work — see the
+blocker above.
 
     nix build .#scout-loader   scout-loader.efi        375 MB   (mkosi: 74 MB)
     nix build .#scout-store    scout-store.squashfs   1396 MB   (mkosi: 1488 MB)

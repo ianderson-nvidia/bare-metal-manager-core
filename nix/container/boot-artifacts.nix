@@ -30,19 +30,16 @@
 # holds exactly what this flake produced and nothing else.
 {
   pkgs,
-  # Architecture directory name inside the image: x86_64 or aarch64. This is
-  # the string nico-pxe's init container copies, not a Nix system tuple.
-  arch,
   # iPXE bootloaders — provides blobs/<arch>/{ipxe,golan}.efi.
   ipxe,
   # The netboot loader UKI, published as scout.efi because that is the name
   # crates/ipxe-renderer/templates.yaml tells iPXE to fetch.
   scoutLoader,
-  # scout-store: the squashfs the loader fetches, and the toplevel path that
-  # names the system inside it. Both or neither — see nix/os/scout-store.nix.
-  scoutStore ? null,
+  # scout-kexec: the kernel, initrd and command line the loader fetches and
+  # kexecs into. All three or none — see nix/os/scout-kexec.nix.
+  scoutKexec ? null,
   # The evaluated scout system. Published as a binary cache beside the
-  # squashfs so a running scout can fetch a new closure incrementally rather
+  # initrd so a running scout can fetch a new closure incrementally rather
   # than refetching the whole image. Optional: without it the payload still
   # serves cold boots and check-scout-updates falls back to rebooting.
   scoutSystem ? null,
@@ -50,6 +47,14 @@
 
 let
   inherit (pkgs) lib;
+
+  # The architecture directory name inside the image, which nico-pxe's init
+  # container names in its `cp`. It has to equal what `uname -m` prints on the
+  # booted machine, because nix/os/scout-loader.nix and the check-scout-updates
+  # unit both build their URLs from $(uname -m). Deriving it from the platform
+  # rather than accepting it as a string makes that an invariant instead of a
+  # convention two other files have to remember.
+  arch = pkgs.stdenv.hostPlatform.uname.processor;
 
   # A flat-file binary cache — the same shape `nix copy --to file://` produces,
   # and usable as a substituter with the file:// or http:// prefix.
@@ -61,7 +66,7 @@ let
   # works where nix copy does not.
   #
   # zstd is the default and matters: the uncompressed cache is about the size
-  # of the squashfs again, and this webroot already carries both.
+  # of the initrd again, and this webroot already carries both.
   scoutCache = pkgs.mkBinaryCache {
     name = "scout-cache-${arch}";
     rootPaths = [ scoutSystem ];
@@ -82,13 +87,14 @@ pkgs.runCommand "boot-artifacts-${arch}"
 
     install -m 0644 ${scoutLoader}/scout-loader.efi $out/${arch}/scout.efi
 
-    ${lib.optionalString (scoutStore != null) ''
-      install -m 0644 ${scoutStore}/scout-store.squashfs     $out/${arch}/scout.squashfs
-      install -m 0644 ${scoutStore}/scout-store.nixos-system $out/${arch}/scout.nixos-system
+    ${lib.optionalString (scoutKexec != null) ''
+      install -m 0644 ${scoutKexec}/scout.kernel  $out/${arch}/scout.kernel
+      install -m 0644 ${scoutKexec}/scout.initrd  $out/${arch}/scout.initrd
+      install -m 0644 ${scoutKexec}/scout.cmdline $out/${arch}/scout.cmdline
     ''}
 
     ${lib.optionalString (scoutSystem != null) ''
-      # Copied rather than symlinked, for the same reason as the squashfs: this
+      # Copied rather than symlinked, for the same reason as the initrd: this
       # tree is served over HTTP and every hop has to dereference correctly.
       cp -r --no-preserve=mode ${scoutCache} $out/${arch}/cache
     ''}

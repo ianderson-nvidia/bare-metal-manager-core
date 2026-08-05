@@ -26,7 +26,9 @@
 let
   # NVIDIA's Mellanox Firmware Tools. Distinct from nixpkgs' mstflint — see the
   # note beside both in environment.systemPackages.
-  mftX86 = import ../third-party/mft-x86_64.nix { inherit pkgs; };
+  # Arch is read from stdenv inside the derivation, so this one call serves
+  # both the x86 and the aarch64 scout without the module knowing which.
+  mft = pkgs.callPackage ../third-party/mft.nix { };
 
   # mkosi.extra/opt/forge/check-nvme-drives.sh — a predicate carbide calls to
   # decide whether a machine's disks are usable before provisioning it.
@@ -104,6 +106,8 @@ in
   # possible.
   imports = [
     (modulesPath + "/installer/netboot/netboot.nix")
+    ./common/console.nix
+    ./common/modprobe-hardening.nix
   ];
 
   # Scout inventories machines nobody enumerated in advance, so it needs
@@ -111,6 +115,41 @@ in
   # stating it here makes the breadth a decision rather than a side effect of
   # importing an installer.
   hardware.enableAllHardware = true;
+
+  # Grace requires 64K pages, and nixpkgs sets no arm64 page size at all — it
+  # takes the kernel's defconfig, which is 4K. The mkosi profile got this by
+  # installing Ubuntu's linux-nvidia-64k-hwe-24.04; there is no prebuilt
+  # equivalent here, so the option has to be set and the kernel rebuilt.
+  #
+  # This is expensive and the expense is unavoidable: a custom kernel config is
+  # a derivation nobody upstream has built, so it never substitutes from
+  # cache.nixos.org and is compiled on every empty store. Under binfmt
+  # emulation that is a kernel compile under qemu, which is the strongest
+  # argument in this tree for a real aarch64 builder — see
+  # docs/nix-aarch64-builder-setup.md.
+  #
+  # Only scout. The loader and the qcow-imager keep the cached 4K kernel: the
+  # loader hands off with kexec, so scout boots its *own* kernel rather than
+  # inheriting this one, and the imager writes disks rather than driving GPUs.
+  # That independence is precisely what soft-reboot could not have given us.
+  #
+  # It also makes the aarch64-page-size check in flake.nix load-bearing rather
+  # than precautionary: with a 64K kernel, a binary whose PT_LOAD segments are
+  # 4K-aligned genuinely fails to map.
+  boot.kernelPackages = lib.mkIf pkgs.stdenv.hostPlatform.isAarch64 (
+    pkgs.linuxPackagesFor (
+      pkgs.linux.override {
+        structuredExtraConfig = with lib.kernel; {
+          ARM64_4K_PAGES = lib.mkForce no;
+          ARM64_64K_PAGES = lib.mkForce yes;
+        };
+        # Fail loudly rather than silently falling back to a 4K kernel, which
+        # would look identical from the outside and only surface as unmappable
+        # binaries on real hardware.
+        ignoreConfigErrors = false;
+      }
+    )
+  );
 
   # netboot-minimal disabled this, and it was right to: linux-firmware is
   # 770 MB, over half the image. Enabling it on the reasoning that a device
@@ -223,7 +262,7 @@ in
     iputils
     lldpd
     mstflint
-    mftX86
+    mft
     mtr
     netcat-openbsd
     nettools
@@ -260,12 +299,8 @@ in
   # Boot and console
   # ==========================================================================
 
-  # Serial matters more than VGA here: these machines are in racks and the
-  # console is reached over IPMI SOL. Both are enabled so either works.
-  boot.kernelParams = [
-    "console=tty0"
-    "console=ttyS0,115200"
-  ];
+  # Serial console and the DHCP match come from nix/os/common/console.nix,
+  # which every boot image imports.
 
   # ConnectX and NVMe have to be probed before scout can report on them, and
   # the machines vary enough that guessing a module list is not viable.
@@ -275,25 +310,7 @@ in
   # Services
   # ==========================================================================
 
-  # The netboot profile pulls in NetworkManager, which brings its own DHCP
-  # handling and a sizeable closure. The mkosi image used systemd-networkd,
-  # and mkosi.extra/etc/systemd/network/dhcp.network matched only wired
-  # interfaces by name — a machine with a management NIC it should not be
-  # DHCPing on is the reason that Match exists.
-  networking.networkmanager.enable = lib.mkForce false;
-  networking.wireless.enable = lib.mkForce false;
-  networking.useNetworkd = true;
-  networking.useDHCP = false;
-  networking.firewall.enable = false;
   networking.hostName = "scout";
-
-  systemd.network.networks."10-dhcp" = {
-    matchConfig.Name = "enx* enp* enP*";
-    networkConfig.DHCP = "yes";
-    # The BMC hands out reservations by MAC, so the client identifier has to
-    # be the MAC rather than systemd's default DUID.
-    dhcpV4Config.ClientIdentifier = "mac";
-  };
 
   # Enabled by 00-forge-discovery-image.preset in the mkosi image.
   services.timesyncd.enable = true;
@@ -319,18 +336,8 @@ in
   users.groups.netdev = { };
   users.groups.lxd = { };
 
-  # Modules disabled in mkosi.extra/etc/modprobe.d/disable-mods.conf. These are
-  # network protocol and crypto modules with a history of CVEs that scout has
-  # no use for; blacklisting only stops autoloading by alias, whereas `install
-  # ... /bin/false` stops an explicit modprobe too.
-  boot.extraModprobeConfig = ''
-    install algif_aead /bin/false
-    install esp4 /bin/false
-    install esp6 /bin/false
-    install rxrpc /bin/false
-    install rds /bin/false
-    install rds_tcp /bin/false
-  '';
+  # The disable-mods.conf blacklist lives in
+  # nix/os/common/modprobe-hardening.nix.
 
   environment.etc."scout-image-version".text = "${scoutVersion}\n";
 
@@ -448,11 +455,12 @@ in
   #
   # A NixOS system has a better answer to "am I current". Its store path is a
   # hash of the entire closure, the running system knows it as
-  # /run/current-system, and scout-store publishes the same path beside the
-  # squashfs. Comparing those two strings is exact in both directions: equal
-  # means byte-identical systems, different means genuinely different. It also
-  # needs nothing from the loader, which removes the one piece of state the two
-  # had to agree on.
+  # /run/current-system, and scout-kexec publishes the same path beside the
+  # initrd, inside the command line it ships as `init=<toplevel>/init`.
+  # Comparing those two strings is exact in both directions: equal means
+  # byte-identical systems, different means genuinely different. It also needs
+  # nothing from the loader, which removes the one piece of state the two had
+  # to agree on.
   #
   # Reboot remains the remedy. With nix.enable = true the closure could instead
   # be fetched and activated in place with switch-to-configuration, which is
@@ -493,11 +501,16 @@ in
       # or this compares against an image the machine never booted.
       url=$(sed 's/ /\n/g' /proc/cmdline | grep '^newrootfs=' | cut -d= -f2- | tail -1 || true)
       if [ -z "$url" ] || [ "$url" = "none" ]; then
-        url="$base/public/blobs/internal/$(uname -m)/scout.squashfs"
+        url="$base/public/blobs/internal/$(uname -m)/scout.initrd"
       fi
 
       cache="$base/public/blobs/internal/$(uname -m)/cache"
-      published=$(curl -sf "''${url%.squashfs}.nixos-system" || true)
+      # The published command line starts with init=<toplevel>/init, so the
+      # system path is the first field with its prefix and suffix trimmed.
+      # Read from the same file the loader boots with rather than a separate
+      # sidecar, so there is nothing that can disagree with what was booted.
+      published=$(curl -sf "''${url%.initrd}.cmdline" \
+        | sed 's/ .*//; s|^init=||; s|/init$||' || true)
       if [ -z "$published" ]; then
         echo "unable to read the published system path for $url" >&2
         exit 1
@@ -515,9 +528,19 @@ in
       # present — for an agent-only rebuild that is a handful of paths rather
       # than the whole 1.4 GB image.
       #
-      # --no-check-sigs because the cache is unsigned today. Once a carbide
-      # signing key exists, drop this and add the public key to
-      # nix.settings.trusted-public-keys.
+      # --no-check-sigs because the cache is unsigned, and a signing key alone
+      # will not change that. The cache in the boot-artifacts payload is built
+      # by pkgs.mkBinaryCache, which has no signing support at all: its
+      # make-binary-cache.py emits StorePath/URL/Compression/FileHash/FileSize/
+      # NarHash/NarSize/References and never a Sig line. Pre-signing the store
+      # paths does not help either — exportReferencesGraph, which is how that
+      # derivation learns the closure, does not carry signatures.
+      #
+      # Producing a signed cache means building it with `nix copy --to file://`
+      # after `nix store sign --recursive`, which cannot happen inside a
+      # derivation because the private key would land in the store. That makes
+      # it a staged artifact rather than a derivation-assembled one — the same
+      # seam as the rest of the boot payload. See SESSION.md.
       if ! nix --extra-experimental-features nix-command \
              copy --no-check-sigs --from "$cache" "$published"; then
         echo "unable to fetch $published from $cache; rebooting instead" >&2

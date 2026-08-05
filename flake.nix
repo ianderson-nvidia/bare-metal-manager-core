@@ -172,6 +172,12 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # flake-schemas: describes output types that stock Nix has no built-in
+    # notion of. This flake produces containers, bootable OS images and PXE
+    # payloads, all of which currently hide inside `packages` behind naming
+    # conventions like the `-container` suffix. See the `schemas` output.
+    flake-schemas.url = "https://flakehub.com/f/DeterminateSystems/flake-schemas/*";
+
   };
 
   outputs =
@@ -182,6 +188,7 @@
       flake-utils,
       nix2container,
       rust-overlay,
+      flake-schemas,
     }:
     # eachSystem iterates over an explicit list of systems, evaluating the
     # function for each, and merges the results into the flake outputs attrset.
@@ -531,7 +538,7 @@
         carbideMeta = {
           license = pkgs.lib.licenses.asl20;
           homepage = "https://github.com/NVIDIA/infra-controller";
-          maintainers = [ ];
+          maintainers = [ "carbide-dev@exchange.nvidia.com"];
         };
 
         # ====================================================================
@@ -602,6 +609,12 @@
             carbide-health = mk "carbide-health";
             carbide-ssh-console = mk "carbide-ssh-console";
             carbide-scout = mk "carbide-scout";
+            # Both shipped inside the monolithic nvmetal-carbide-aarch64 image
+            # that per-service images replace, and both are named in
+            # check-aarch64-release-container-services-page-size — so an arm64
+            # build already had to exist; it just was not produced here.
+            carbide-log-parser = mk "carbide-log-parser";
+            carbide-bmc-proxy = mk "carbide-bmc-proxy";
           };
 
         # ====================================================================
@@ -615,10 +628,11 @@
         #   3. Copy that sha256 here and rebuild.
         # All rest-api binaries share this — they all live under the same
         # go.mod, so vendoring is identical for each.
-        restApiVendorHash = "sha256-Ty2FyzJeTRpDjBiYuUQ91EPHtKLmzgAg3s9M1UBpOtI=";
+        restApiVendorHash = "sha256-vhs30ZuDSXluzsQQ1aaEmCuM04u00zC8G0WlqxiELYI=";
 
         restApi = import ./nix/go/rest-api.nix {
           inherit pkgs version system;
+          crossPkgs = aarch64CrossPkgs;
           src = ./rest-api;
           vendorHash = restApiVendorHash;
         };
@@ -666,10 +680,10 @@
 
         # Pre-built third-party aarch64 binaries — fetched as fixed-output
         # derivations so Nix can verify them without network access at build time.
-        mftAarch64 = import ./nix/third-party/mft-aarch64.nix {
-          inherit pkgs;
-          crossPkgs = aarch64CrossPkgs;
-        };
+        # Architecture comes from the package set rather than an argument: the
+        # aarch64 build is selected by calling it through the cross set, which
+        # also splices dpkg/patchelf/file back to the build platform.
+        mftAarch64 = aarch64CrossPkgs.callPackage ./nix/third-party/mft.nix { };
 
         transceiverExporterAarch64 = import ./nix/third-party/transceiver-exporter-aarch64.nix {
           inherit pkgs;
@@ -879,35 +893,33 @@
         carbide-scout-aarch64 = mkCrossCrateBinary { pname = "carbide-scout"; };
 
         # ====================================================================
-        # Scout discovery environment as a NixOS netboot UKI
+        # Boot images — scout, its loader, and the qcow imager
         #
-        # An alternative to the mkosi-built scout.efi + scout.cpio.zst pair.
-        # One file rather than two, and no Ubuntu archive is consulted at
-        # build time. Published to the same path the iPXE templates already
-        # reference, so carbide-pxe needs no change to serve it.
+        # The matrix of architectures and roles lives in nix/os/images.nix so
+        # that adding an image or an architecture does not mean editing this
+        # file. It produces flat attributes — scout-kexec, scout-loader,
+        # qcow-imager and their -aarch64 counterparts — published to the paths
+        # crates/ipxe-renderer/templates.yaml already names, so carbide-pxe
+        # needs no change to serve them.
         # ====================================================================
-        scoutNixosSystem = nixpkgs.lib.nixosSystem {
-          # The module takes forgeScout rather than reaching into the flake so
-          # that the same configuration can be evaluated against a cross
-          # package set for the aarch64 variant.
-          specialArgs = {
-            forgeScout = nativeRustBinaries.carbide-scout;
-            scoutVersion = version;
-          };
-          modules = [
-            ./nix/os/scout.nix
-            ./nix/os/scout-nvidia.nix
-            { nixpkgs.hostPlatform = system; }
-          ];
+        osImageSet = import ./nix/os/images.nix {
+          inherit nixpkgs version;
+          lib = pkgs.lib;
+          buildSystem = system;
+          # Keyed on whether the target matches the system being evaluated,
+          # not on the architecture name. Those differ on an aarch64 host,
+          # where an aarch64 target is *native* — picking the cross binary
+          # there would cross-compile aarch64-to-aarch64 and pull in a whole
+          # second Rust toolchain to do it.
+          forgeScoutFor =
+            target:
+            if target.system == system then
+              nativeRustBinaries.carbide-scout
+            else
+              carbide-scout-aarch64;
         };
 
-        # The root filesystem the loader fetches over HTTP, replacing the
-        # scout-oss profile's scout.squashfs. Staged into the webroot by
-        # `cargo make --cwd pxe scout-x86_64-from-nix`.
-        scout-store = import ./nix/os/scout-store.nix {
-          inherit pkgs;
-          nixosSystem = scoutNixosSystem;
-        };
+        inherit (osImageSet.packages) scout-kexec scout-loader qcow-imager;
 
         # The boot-artifacts payload, assembled from the derivations above
         # rather than from whatever is staged in pxe/static/blobs/internal.
@@ -915,26 +927,10 @@
         # dev/docker/Dockerfile.release-artifacts-x86_64.
         bootArtifactsFiles = import ./nix/container/boot-artifacts.nix {
           inherit pkgs;
-          arch = "x86_64";
           ipxe = ipxe-efi-x86;
           scoutLoader = scout-loader;
-          scoutStore = scout-store;
-          scoutSystem = scoutNixosSystem.config.system.build.toplevel;
-        };
-
-        # The small image iPXE boots, which fetches scout-store and pivots into
-        # it. Replaces the scout-loader mkosi profile; published as scout.efi.
-        scoutLoaderSystem = nixpkgs.lib.nixosSystem {
-          modules = [
-            ./nix/os/scout-loader.nix
-            { nixpkgs.hostPlatform = system; }
-          ];
-        };
-
-        scout-loader = import ./nix/os/uki.nix {
-          inherit pkgs;
-          nixosSystem = scoutLoaderSystem;
-          name = "scout-loader";
+          scoutKexec = scout-kexec;
+          scoutSystem = osImageSet.systems.x86_64.scout-kexec.config.system.build.toplevel;
         };
       in
       {
@@ -956,13 +952,15 @@
             // restApiBinariesArm64
             // containers
             // debs
+            # Every boot image the matrix in nix/os/images.nix produces, both
+            # architectures. Merged rather than listed, so a new image or a
+            # newly buildable architecture appears here without an edit.
+            // osImageSet.packages
             // {
               inherit
                 ipxe-efi-x86
                 ipxe-efi-aarch64
                 carbide-scout-aarch64
-                scout-store
-                scout-loader
                 ;
 
               # Expose the deps-only derivation so CI can cache it directly.
@@ -981,6 +979,11 @@
             // restApiBinariesAmd64
             // restApiBinariesArm64
             // containers
+            # The same boot images as on x86, but evaluated with this system as
+            # the build platform — so the aarch64 ones come out native rather
+            # than cross. That distinction is the whole point of exposing them
+            # on both: see the note beside `targets` in nix/os/images.nix.
+            // osImageSet.packages
             // {
               inherit
                 ipxe-efi-aarch64
@@ -988,6 +991,106 @@
             }
           else
             { };
+
+        # ==================================================================
+        # Categorised outputs — described by the `schemas` output below
+        # ==================================================================
+        #
+        # These hold the same derivations as `packages`, sorted into the kinds
+        # of thing this repo actually ships. `packages` stays the canonical
+        # buildable set so `nix build .#carbide-api-container` and every
+        # justfile recipe keep working unchanged; this is additive.
+        #
+        # The point is that the categories stop being a naming convention.
+        # Until now "which of these is a container?" was answered by testing
+        # for a `-container` suffix, in the flake and in CI both — so a service
+        # named without that suffix would quietly never be published.
+
+        # `ociImages` rather than a custom `containers` name: flake-schemas
+        # ships a schema for it, so this costs nothing and matches what other
+        # tooling expects to find.
+        ociImages = pkgs.lib.optionalAttrs isLinux containers;
+
+        # Bootable images: the loader UKI iPXE fetches, and the squashfs it
+        # pivots into. Not containers, and not ordinary packages either —
+        # each is consumed by firmware or by the loader, not by a runtime.
+        osImages = pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          inherit scout-loader scout-kexec qcow-imager;
+        };
+
+        # The PXE webroot payload. Kept separate from the container that
+        # carries it, because until the legacy DPU path is retired the aarch64
+        # payload is assembled by cargo-make from these files rather than by
+        # nix2container.
+        bootArtifacts = pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          boot-artifacts-x86_64 = bootArtifactsFiles;
+        };
+
+        # Transitional, and worth being able to see shrink: forge-scout's deb
+        # exists only to install the agent into the mkosi scout image and goes
+        # when mkosi does. The forge-dpu deb that outlives it is built by
+        # cargo-make, not here.
+        debPackages = pkgs.lib.optionalAttrs (system == "x86_64-linux") debs;
+
+        # ==================================================================
+        # Checks — `nix flake check`
+        # ==================================================================
+        checks = pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          # Replaces the cargo-make task
+          # check-aarch64-release-container-services-page-size, which named
+          # twelve artifacts by path under target/ and so only checked
+          # whatever a previous cargo build happened to leave behind. Driving
+          # it from the derivations means the list cannot drift from what is
+          # actually shipped.
+          #
+          # What it catches: aarch64 server hardware (Grace, some Ampere SKUs)
+          # runs a 64KB-page kernel, and a binary linked with the default 4KB
+          # segment alignment can fail to load there. The link flag that
+          # prevents it is set in nix/rust/cross-crate-binary-aarch64.nix; this
+          # verifies the result rather than trusting the flag stayed put.
+          #
+          # Rust binaries only, matching the task it replaces. The rest-api Go
+          # binaries are also aarch64 ELF and are not covered here — worth
+          # settling separately rather than folding into this change, since a
+          # failure there would be a real finding rather than a regression.
+          aarch64-page-size =
+            let
+              # carbide-dhcp is excluded because it cannot be cross-compiled at
+              # all today: it links against Kea, and nixpkgs' Kea uses meson,
+              # which refuses to cross with "Can not run test applications in
+              # this cross environment". That failure predates this check and
+              # is unrelated to page size, but leaving it in would make
+              # `nix flake check` permanently red and therefore ignored.
+              #
+              # Named rather than filtered by a predicate so that fixing Kea
+              # means deleting a line here, and so nobody has to wonder which
+              # binaries are silently unchecked.
+              skip = [ "carbide-dhcp" ];
+              toCheck = builtins.removeAttrs (aarch64Binaries // aarch64ServerBinaries) skip;
+            in
+            pkgs.runCommand "check-aarch64-page-size"
+              {
+                nativeBuildInputs = [
+                  pkgs.bash
+                  pkgs.binutils
+                ];
+              }
+              ''
+                fail=0
+                echo "Not checked (cannot cross-compile yet): ${pkgs.lib.concatStringsSep " " skip}"
+                # Invoked as `bash <script>` rather than executed: the shebang
+                # is /usr/bin/env, which does not exist in the build sandbox.
+                for d in ${pkgs.lib.concatStringsSep " " (map toString (builtins.attrValues toCheck))}; do
+                  echo "== $d"
+                  bash ${./scripts/check-aarch64-pagesize.sh} "$d" || fail=1
+                done
+                [ "$fail" -eq 0 ] || {
+                  echo "ERROR: one or more aarch64 binaries cannot map on a 64KB-page kernel."
+                  exit 1
+                }
+                touch $out
+              '';
+        };
 
         # Runnable targets — `nix run .#<name>`. Each app family lives in its
         # own file under nix/apps/; see those files for what they do.
@@ -1110,6 +1213,55 @@
           }
         );
       }
-    );
+    )
+    // {
+      # ====================================================================
+      # Schemas — what the non-standard outputs above actually are
+      # ====================================================================
+      #
+      # Nix has no built-in notion of most flake outputs; Determinate Nix
+      # reads them from here instead, which is what lets `nix flake show`
+      # render osImages and bootArtifacts as something other than "unknown".
+      #
+      # Merged outside eachSystem deliberately: `schemas` describes output
+      # types and is not itself per-system, so it must not be wrapped.
+      #
+      # `ociImages` is inherited from the defaults rather than redefined.
+      schemas = flake-schemas.schemas // {
+        osImages = {
+          version = 1;
+          doc = ''
+            The `osImages` output holds bootable operating system images: the
+            UKI that iPXE loads, and the squashfs root filesystem that UKI
+            fetches and pivots into. They are consumed by firmware and by the
+            loader rather than by a container runtime, which is why they are
+            not `ociImages` and not merely `packages`.
+          '';
+          inventory = flake-schemas.lib.derivationsInventory "OS image" false;
+        };
+
+        bootArtifacts = {
+          version = 1;
+          doc = ''
+            The `bootArtifacts` output holds PXE webroot payloads — the
+            directory tree carbide-pxe serves to machines under discovery,
+            containing iPXE bootloaders, the scout loader and root filesystem,
+            and a binary cache a booted scout can update itself from.
+          '';
+          inventory = flake-schemas.lib.derivationsInventory "PXE boot payload" false;
+        };
+
+        debPackages = {
+          version = 1;
+          doc = ''
+            The `debPackages` output holds .deb packages. These are
+            transitional: they exist to install binaries into images built by
+            tooling that predates this flake, and are expected to disappear
+            rather than grow.
+          '';
+          inventory = flake-schemas.lib.derivationsInventory "Debian package" false;
+        };
+      };
+    };
 }
 
