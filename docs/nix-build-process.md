@@ -21,7 +21,7 @@ nix build .#carbide-pxe
 nix build .#carbide-dhcp
 nix build .#carbide-health
 nix build .#carbide-ssh-console
-nix build .#carbide-admin-cli
+nix build .#nico-admin-cli
 nix build .#carbide-scout
 
 # aarch64 cross-compiled binaries (from any host)

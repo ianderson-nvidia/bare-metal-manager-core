@@ -35,9 +35,9 @@
 # entry is a deliberate statement that the plain distroless image is correct,
 # not an oversight.
 {
-  # aarch64 Mellanox Firmware Tools. The DPU agent shells out to flint and
-  # mlxfwreset for firmware operations.
-  mftAarch64,
+  # Mellanox Firmware Tools, as a function of the package set — services shell
+  # out to flint, mlxfwreset, mlxconfig and mlxfwmanager for firmware work.
+  mftFor,
   # Custom OpenTelemetry collector build; supplies the wrapper scripts that
   # become the otelcol image's entrypoint.
   otelcolContribAarch64,
@@ -53,14 +53,27 @@
   carbide-api = {
     # The API drives hardware directly: tpm2-tools for attestation, ipmitool
     # for out-of-band power control, iproute2/iputils for reachability checks.
+    #
+    # The second group covers what the API's dependency crates shell out to:
+    # util-linux for lscpu (host-support), openssh for scp (ssh), and MFT for
+    # mlxfwmanager (libmlx).
+    #
+    # TODO: carbide-kms-provider also invokes `vault`, which is not installed.
+    # nixpkgs' vault is BUSL-1.1, and redistributing it inside a published
+    # image is a licensing decision rather than a packaging one. Until that is
+    # settled the Vault KMS backend fails with ENOENT at the point of use.
     runtime =
-      p: with p; [
+      p:
+      [ (mftFor p) ]
+      ++ (with p; [
         tpm2-tools
         ipmitool
         busybox
         iputils
         iproute2
-      ];
+        util-linux
+        openssh
+      ]);
     # Mount points. Init containers populate these before the API starts, and
     # the mounts fail if the directories are missing.
     optCarbideDirs = [
@@ -106,44 +119,77 @@
   carbide-dsx-exchange-consumer = { };
   carbide-health = { };
   carbide-log-parser = { };
-  carbide-ssh-console = { };
+
+  carbide-ssh-console = {
+    # Drives BMCs out of band: ipmitool for the IPMI transport, ping to decide
+    # whether an endpoint is reachable before dialling it.
+    runtime =
+      p: with p; [
+        ipmitool
+        iputils
+        busybox
+      ];
+  };
 
   # Runs inside the scout initramfs as well as in a container. The initramfs
   # copy is a .deb built from the same binary (see nix/deb/debs.nix), and that
-  # is where its runtime tools — tpm2-tools, ipmitool — are bundled.
-  carbide-scout = { };
+  # is where its runtime tools are bundled; the container has to name them,
+  # and shipped none until this entry existed.
+  #
+  # systemd is here for systemctl and systemd-detect-virt, which scout calls
+  # while probing the host. Both only do anything useful when the container
+  # runs with the host's /run mounted through — inside an isolated container
+  # they find no init to talk to.
+  carbide-scout = {
+    runtime =
+      p:
+      [ (mftFor p) ]
+      ++ (with p; [
+        busybox
+        systemd
+        tpm2-tools
+        util-linux
+        openssh
+        nerdctl
+      ]);
+  };
 
   # ==========================================================================
   # DPU-side services — arm64 only
   # ==========================================================================
 
   forge-dpu-agent = {
-    # python3 and bash back the agent's provisioning scripts; cri-tools and
-    # lldpd let it inspect the container runtime and link topology.
+    # bash backs the agent's upgrade and health scripts; cri-tools and lldpd
+    # let it inspect the container runtime and link topology; openvswitch
+    # provides ovs-vsctl for the DPU's bridge configuration.
     runtime =
       p:
-      [ mftAarch64 ]
+      [ (mftFor p) ]
       ++ (with p; [
         bash
-        python3
         iproute2
         lldpd
         cri-tools
+        openvswitch
         busybox
       ]);
+    # crates/agent/src/ovs.rs invokes ovs-vsctl by absolute path, but buildEnv
+    # links binaries into /bin — so /usr/bin/ovs-vsctl has to be created here
+    # or every bridge operation fails with ENOENT.
+    extraCommands = ''
+      mkdir -p usr/bin
+      ln -sf /bin/ovs-vsctl usr/bin/ovs-vsctl
+    '';
     entrypoint = [ "/bin/forge-dpu-agent" ];
   };
 
+  # A standalone DHCP server, unlike carbide-dhcp — it serves leases itself
+  # rather than being loaded into kea, so the image ships no kea.
   forge-dhcp-server = {
-    runtime =
-      p: with p; [
-        kea
-        busybox
-      ];
+    runtime = p: with p; [ busybox ];
     # The DPU's service definition invokes the binary through /var/support,
     # so the image provides that path as a symlink onto /bin.
     extraCommands = ''
-      mkdir -p var/run/kea
       mkdir -p var/support/forge-dhcp/bin
       ln -sf /bin/forge-dhcp-server var/support/forge-dhcp/bin/forge-dhcp-server
     '';

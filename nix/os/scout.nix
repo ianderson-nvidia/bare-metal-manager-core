@@ -136,6 +136,30 @@ in
   # It also makes the aarch64-page-size check in flake.nix load-bearing rather
   # than precautionary: with a 64K kernel, a binary whose PT_LOAD segments are
   # 4K-aligned genuinely fails to map.
+  # vmxnet3 is VMware's virtual NIC, and its Kconfig depends on
+  # PAGE_SIZE_LESS_THAN_64KB — so on the 64K kernel above it does not exist,
+  # and cannot. That is correct behaviour from Kconfig, not a misconfiguration:
+  # switching to 64K pages drops 34 symbols, all of them page-size dependent
+  # (PAGE_SIZE_4KB, ARM64_LPA2, THP_SWAP, the Intel DRM_XE stack, and this).
+  #
+  # The problem is that hardware.enableAllHardware lists vmxnet3
+  # unconditionally in availableKernelModules — nixpkgs guards the other VMware
+  # entries behind isx86 but not this one — and the modules-shrunk step is
+  # fatal on a module it cannot find:
+  #
+  #   modprobe: FATAL: Module vmxnet3 not found in directory .../6.18.39
+  #
+  # Dropping just this entry rather than setting boot.initrd.allowMissingModules,
+  # which would silently tolerate *any* absent module, including one scout
+  # actually needs to see a disk. A discovery image that cannot enumerate
+  # hardware is worse than one that fails to build.
+  #
+  # No loss on real hardware either way: scout runs on bare metal, and a VMware
+  # paravirtual NIC is exactly what it will never meet.
+  boot.initrd.availableKernelModules.vmxnet3 = lib.mkIf pkgs.stdenv.hostPlatform.isAarch64 (
+    lib.mkForce false
+  );
+
   boot.kernelPackages = lib.mkIf pkgs.stdenv.hostPlatform.isAarch64 (
     pkgs.linuxPackagesFor (
       pkgs.linux.override {

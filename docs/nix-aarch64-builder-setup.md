@@ -9,8 +9,8 @@ pool" section.
 
 ## Do you need this?
 
-A builder is optional. There are three ways to produce an aarch64 image,
-and they differ in what they cost rather than in what they produce:
+A builder is optional for most images, but not all — see the kea limitation
+below. There are three ways to produce an aarch64 image:
 
 | | invocation | needs | substitutes from cache.nixos.org |
 |---|---|---|---|
@@ -26,6 +26,28 @@ and the kernel are compiled from source every time the store is empty.
 
 Prefer a builder or binfmt. Cross-compiling is the fallback for working
 offline or with no aarch64 execution available at all.
+
+### One image cannot be cross-compiled at all
+
+`carbide-dhcp-container-arm64` fails, and no flag fixes it:
+
+    kea-aarch64-unknown-linux-gnu-3.0.3.drv
+    meson.build:368:13: ERROR: Can not run test applications in this cross environment.
+
+kea's meson build *executes* test binaries while configuring, which cannot
+work when the build machine cannot run the host architecture's code. The
+carbide-dhcp image ships kea, because carbide-dhcp is a hook library loaded
+into `kea-dhcp4-server` rather than a standalone program.
+
+A builder or binfmt avoids this by not building kea at all — Hydra has
+already built it for aarch64, so it substitutes from cache.nixos.org and only
+carbide's own hook library is compiled.
+
+So cross-compiling produces 13 of the 14 arm64 service images. If you need
+the fourteenth, you need aarch64 execution of some kind.
+
+(Note that `forge-dhcp-server` is unaffected despite the name — it serves
+leases itself and links no kea.)
 
 ### binfmt, if you would rather not run a builder
 
@@ -182,6 +204,91 @@ nix store info --store ssh-ng://ubuntu@<new-ec2-ip>
 `Trusted: 1` is the green light. `Trusted: 0` means step 2 (trusted-users
 on the EC2) didn't take — re-run step 2 + 4.
 
+## Private git dependencies on the builder
+
+The workspace depends on two **private** GitHub repositories,
+`NVIDIA/nv-rms-client` and `NVIDIA/libredfish`. If you build aarch64
+binaries *natively* on the builder, it needs its own GitHub credentials.
+
+This is not obvious, because it depends on where the fetch runs. Cargo git
+dependencies are fetched by fixed-output derivations that carry a `system`:
+
+    nix derivation show /nix/store/...-cargo-git-...drv | grep '"system"'
+
+    "system":"x86_64-linux"    cross path  — runs on your workstation
+    "system":"aarch64-linux"   native path — scheduled wherever aarch64 work goes
+
+So `nix build .#forge-dpu-agent` (cross from x86) fetches locally, while
+`nix build .#packages.aarch64-linux.<pkg>` produces aarch64 fetch derivations
+that Nix may send to the builder.
+
+Note the *may*. If your workstation has `extra-platforms = aarch64-linux` it
+can also run those fetches under emulation, using your credentials — so the
+same command can fetch locally today and on the builder tomorrow, depending on
+scheduling. Do not rely on it.
+
+The failure is confusing when it happens: a `could not read Username for
+'https://github.com'` buried inside a Rust build, on a repository that looks
+public from a browser.
+
+Nix's `access-tokens` setting does **not** help. That covers Nix's own
+fetchers — `github:` flake refs and tarballs. A `git+https://` cargo
+dependency is fetched by invoking `git`, which uses git's own credential
+machinery instead.
+
+Credentials must belong to **root**: fetches run inside `nix-daemon`.
+
+```sh
+# on the builder — a PAT rather than `gh auth login`, which wants a browser
+sudo git config --system credential.helper store
+sudo tee /root/.git-credentials >/dev/null <<'EOF'
+https://<username>:<PAT>@github.com
+EOF
+sudo chmod 600 /root/.git-credentials
+
+# verify as the daemon would
+sudo GIT_TERMINAL_PROMPT=0 git ls-remote \
+  https://github.com/NVIDIA/nv-rms-client.git refs/tags/v0.10.0
+```
+
+`--system` writes `/etc/gitconfig`, so it covers root and any build user
+without duplicating the config.
+
+There is no need for a `.git/config` on the builder — that is repo-local, and
+the builder never holds a checkout. Nix ships derivations to it, not a clone.
+
+### You cannot pre-seed the builder by copying the fetched sources
+
+The obvious way to avoid giving the builder credentials is to fetch on the
+workstation, `nix copy` the result over, and let the aarch64 build reuse it.
+That does not work, and the reason is worth knowing before you spend time on
+it: these paths are not shared between architectures. Same repository, same
+commit, different store path.
+
+    # on the workstation, after a cross build
+    ls -d /nix/store/*cargo-git*libredfish*b199e7be*
+    /nix/store/ny0n7ymkiqzs73dfdsdz8j1qawhz9lwl-cargo-git-...-b199e7be...
+
+    # what the native aarch64 build asks for
+    /nix/store/pbbqs4gnzr7jylh2i01q1s13kjpyj466-cargo-git-...-b199e7be...
+
+Copying `ny0n7ymk…` to the builder satisfies nothing, because nothing wants
+it. The build still fetches `pbbqs4gn…` itself.
+
+So credentials on the builder are mandatory rather than a convenience, and
+every additional architecture re-fetches the private repositories on its own.
+
+### The same applies on your workstation
+
+`credential.helper = cache` alone cannot *acquire* credentials, only cache
+them. If git has no way to obtain them it will either block on a browser
+(`git-credential-oauth`) or fail with `could not read Username`. With `gh`
+installed and authenticated, this is the least surprising option:
+
+```sh
+git config --global --add credential.helper '!gh auth git-credential'
+```
+
 ## Smoke test
 
 ```sh
@@ -315,9 +422,52 @@ Two knobs control parallelism, and they're often confused:
 - OOM / daemon-disconnect / SIGKILL on rustc → lower `max-jobs`.
 - Single rustc takes forever, lots of idle cores → raise `cores`.
 
-For c7g.xlarge (4 vCPU, 8 GB), `max-jobs = 2` and `cores = 3` is
-a good starting point: 2 derivations in parallel, each using up to
-3 threads. Fits comfortably in 8 GB for carbide-scale workspaces.
+**Peak load is `max-jobs` × `cores`, not `cores`.** This is the part that
+catches people: capping `cores` alone does nothing if `max-jobs` multiplies
+it. `cores = 4` with `max-jobs = 2` can put 8 threads on a 6-core box and
+make the instance unresponsive to SSH.
+
+For c7g.xlarge (4 vCPU, 8 GB) where RAM is the ceiling, `max-jobs = 2` and
+`cores = 3` is a reasonable start.
+
+On a larger box RAM stops being the constraint and CPU becomes it. On 6 cores
+with 36 GB, to keep two cores free for the OS, keep the product at or below 4:
+
+| | Rust phase (many small crates) | kernel (one big derivation) |
+|---|---|---|
+| `max-jobs = 1`, `cores = 4` | slow, fully serial | **4 cores** — best |
+| `max-jobs = 2`, `cores = 2` | good | 2 cores |
+| `max-jobs = 4`, `cores = 1` | best | 1 core — painful |
+
+The kernel runs alone anyway — nothing else is ready while it builds — so
+`max-jobs = 2, cores = 2` is the sane middle.
+
+### Guaranteeing headroom with systemd
+
+Better than tuning Nix settings: let systemd enforce the limit, so
+responsiveness does not depend on getting the arithmetic right.
+
+```sh
+sudo systemctl edit nix-daemon.service
+```
+```ini
+[Service]
+# Nix builds are children of the daemon, so they inherit this.
+CPUWeight=20        # loses to interactive work under contention
+CPUQuota=400%       # hard ceiling of 4 of 6 cores
+MemoryHigh=28G      # throttle before the OOM killer gets involved
+```
+```sh
+sudo systemctl daemon-reload && sudo systemctl restart nix-daemon
+```
+
+`CPUWeight` alone is often nicer than a quota: builds use the whole box when
+it is idle, but your shell wins the moment you type. `MemoryHigh` throttles
+rather than kills, so a runaway compile degrades instead of losing the build.
+
+With these in place, `max-jobs` can be raised without the box locking up, and
+the limit still holds if someone later bumps the Nix settings without thinking
+about the multiplication.
 
 Edit `builders =` in your **local** `/etc/nix/nix.custom.conf`,
 restart `nix-daemon`, and you're done — no rebuild of the EC2 needed.

@@ -683,7 +683,10 @@
         # Architecture comes from the package set rather than an argument: the
         # aarch64 build is selected by calling it through the cross set, which
         # also splices dpkg/patchelf/file back to the build platform.
-        mftAarch64 = aarch64CrossPkgs.callPackage ./nix/third-party/mft.nix { };
+        # Mellanox Firmware Tools. A function of the package set rather than a
+        # fixed derivation, so one spec entry serves both architectures —
+        # mft.nix selects tarball, deb and ld.so from stdenv.hostPlatform.
+        mftFor = p: p.callPackage ./nix/third-party/mft.nix { };
 
         transceiverExporterAarch64 = import ./nix/third-party/transceiver-exporter-aarch64.nix {
           inherit pkgs;
@@ -716,7 +719,7 @@
         # entrypoint, directory fixups. One entry per service; see
         # nix/services/default.nix for the field reference.
         serviceSpecs = import ./nix/services {
-          inherit mftAarch64 otelcolContribAarch64 nsmStaticFiles;
+          inherit mftFor otelcolContribAarch64 nsmStaticFiles;
         };
 
         # Per-service containers — one image per binary per architecture.
