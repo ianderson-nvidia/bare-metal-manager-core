@@ -87,6 +87,59 @@ pub fn arpa_qname_to_ip(qname: &str) -> Option<IpAddr> {
     }
 }
 
+/// Convert a reverse-DNS name into the address range it stands for.
+///
+/// Each label under `in-addr.arpa` is one octet and each label under
+/// `ip6.arpa` is one nibble, so the number of labels sets the prefix length:
+///
+/// - `2.0.192.in-addr.arpa` → `192.0.2.0/24`
+/// - `1.2.0.192.in-addr.arpa` → `192.0.2.1/32`
+/// - `8.b.d.0.1.0.0.2.ip6.arpa` → `2001:db8::/32`
+///
+/// Unlike [`arpa_qname_to_ip`], a partial name is accepted. Queries at those
+/// names are normal: a resolver doing qname minimisation asks for them on the
+/// way down to the full address.
+///
+/// Returns `None` if the name is not under `in-addr.arpa` / `ip6.arpa`, has
+/// too many labels, or has a label that is not a valid octet or nibble.
+pub fn arpa_qname_to_prefix(qname: &str) -> Option<IpNetwork> {
+    let name = qname.trim_end_matches('.').to_ascii_lowercase();
+
+    if let Some(reversed) = name.strip_suffix(".in-addr.arpa") {
+        let octets: Vec<&str> = reversed.split('.').collect();
+        if octets.len() > 4 {
+            return None;
+        }
+        let mut addr = [0u8; 4];
+        for (byte, octet) in addr.iter_mut().zip(octets.iter().rev()) {
+            *byte = octet.parse().ok()?;
+        }
+        let prefix_len = (octets.len() * 8) as u8;
+        IpNetwork::new(IpAddr::V4(Ipv4Addr::from(addr)), prefix_len).ok()
+    } else if let Some(reversed) = name.strip_suffix(".ip6.arpa") {
+        let nibbles: Vec<&str> = reversed.split('.').collect();
+        if nibbles.len() > 32 {
+            return None;
+        }
+        let mut addr = [0u8; 16];
+        for (i, nibble) in nibbles.iter().rev().enumerate() {
+            if nibble.len() != 1 {
+                return None;
+            }
+            let value = u8::from_str_radix(nibble, 16).ok()?;
+            if i % 2 == 0 {
+                addr[i / 2] = value << 4;
+            } else {
+                addr[i / 2] |= value;
+            }
+        }
+        let prefix_len = (nibbles.len() * 4) as u8;
+        IpNetwork::new(IpAddr::V6(Ipv6Addr::from(addr)), prefix_len).ok()
+    } else {
+        None
+    }
+}
+
 /// Build the reverse-DNS zone name for a network prefix: the network octets
 /// (IPv4) or nibbles (IPv6) the prefix covers, in reverse, under `in-addr.arpa`
 /// / `ip6.arpa`. The forward inverse of [`arpa_qname_to_ip`].
@@ -887,6 +940,30 @@ mod tests {
                 "1.0.168.192.IN-ADDR.ARPA." => Some(IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))),
                 "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.B.D.0.1.0.0.2.IP6.ARPA."
                     => Some("2001:db8::1".parse::<IpAddr>().unwrap()),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_partial_arpa_qname_to_prefix() {
+        use carbide_test_support::value_scenarios;
+        use ipnetwork::IpNetwork;
+
+        let net = |cidr: &str| Some(cidr.parse::<IpNetwork>().unwrap());
+        value_scenarios!(
+            run = |qname: &str| super::arpa_qname_to_prefix(qname);
+            "intermediate reverse names cover a prefix" {
+                "2.0.192.in-addr.arpa." => net("192.0.2.0/24"),
+                "10.in-addr.arpa." => net("10.0.0.0/8"),
+                "8.b.d.0.1.0.0.2.ip6.arpa." => net("2001:db8::/32"),
+            }
+            "a full address is a host prefix" {
+                "1.2.0.192.in-addr.arpa." => net("192.0.2.1/32"),
+            }
+            "rejects non-arpa and malformed" {
+                "host.example.com." => None,
+                "300.0.192.in-addr.arpa." => None,
+                "1.1.2.0.192.in-addr.arpa." => None,
             }
         );
     }

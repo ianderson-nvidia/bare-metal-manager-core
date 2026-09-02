@@ -18,6 +18,7 @@ use std::net::IpAddr;
 
 use carbide_uuid::domain::DomainId;
 use dns_record::SoaRecord;
+use ipnetwork::IpNetwork;
 use sqlx::postgres::PgRow;
 use sqlx::{Error, FromRow, Row};
 
@@ -220,6 +221,54 @@ pub async fn find_ptr_record(
     sqlx::query_as::<_, DbPtrRecord>(query)
         .bind(address.to_string())
         .fetch_all(txn)
+        .await
+        .map_err(|e| DatabaseError::query(query, e))
+}
+
+/// Is there any published record under `name`?
+///
+/// `name` is absolute and lowercase with its trailing dot, such as
+/// `rack1.example.com.`. Only names strictly below it count; a record at
+/// `name` itself does not.
+///
+/// This decides NODATA versus NXDOMAIN for a name that has no records of its
+/// own. If `gpu1.rack1.example.com.` exists then `rack1.example.com.` exists
+/// too, even with nothing published at it (RFC 8020 §2), and a query for it
+/// must not be answered NXDOMAIN.
+pub async fn any_record_below(txn: impl DbReader<'_>, name: &str) -> Result<bool, DatabaseError> {
+    let query = r#"
+    SELECT EXISTS (
+        SELECT 1 FROM dns_records
+        WHERE right(lower(q_name), length($1) + 1) = '.' || $1
+    )"#;
+    sqlx::query_scalar::<_, bool>(query)
+        .bind(name)
+        .fetch_one(txn)
+        .await
+        .map_err(|e| DatabaseError::query(query, e))
+}
+
+/// True when any address that could answer a PTR query falls inside `prefix`.
+/// The owner tables mirror those in [`find_ptr_record`]. Used to tell an empty
+/// non-terminal in a reverse zone (NODATA) from a name with nothing under it
+/// (NXDOMAIN).
+pub async fn any_ptr_owner_within(
+    txn: impl DbReader<'_>,
+    prefix: IpNetwork,
+) -> Result<bool, DatabaseError> {
+    let query = r#"
+    SELECT EXISTS (
+        SELECT 1 FROM machine_interface_addresses WHERE address <<= $1::inet
+    ) OR EXISTS (
+        SELECT 1
+        FROM instance_addresses ia
+        JOIN network_segments ns ON ns.id = ia.segment_id
+        WHERE ia.address <<= $1::inet
+          AND ns.network_segment_type <> 'host_inband'
+    )"#;
+    sqlx::query_scalar::<_, bool>(query)
+        .bind(prefix.to_string())
+        .fetch_one(txn)
         .await
         .map_err(|e| DatabaseError::query(query, e))
 }
