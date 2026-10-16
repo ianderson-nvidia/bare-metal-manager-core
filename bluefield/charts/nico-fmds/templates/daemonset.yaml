@@ -196,7 +196,64 @@ spec:
               mountPath: {{ $dir }}
               readOnly: true
             {{- end }}
+        {{- if .Values.dnsResolver.enabled }}
+        - name: unbound
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_BIND_SERVICE
+          command:
+            - /busybox/sh
+            - -ec
+            - |
+              # The agent publishes a complete, validated configuration before
+              # the resolver starts, including after DPU reprovisioning.
+              until [ -f /var/lib/carbide/dns/unbound.conf ]; do
+                /busybox/sleep 1
+              done
+              exec /usr/sbin/unbound -d -c /var/lib/carbide/dns/unbound.conf
+          ports:
+            - name: dns-udp
+              containerPort: 53
+              protocol: UDP
+            - name: dns-tcp
+              containerPort: 53
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+                - /usr/sbin/unbound-control
+                - -c
+                - /var/lib/carbide/dns/unbound.conf
+                - status
+          volumeMounts:
+            # Directory mounts expose atomic configuration replacements to the
+            # running resolver. It does not need FMDS credentials or agent tokens.
+            - name: dns-config
+              mountPath: /var/lib/carbide/dns
+              readOnly: true
+            - name: dns-run
+              mountPath: /run/carbide-dns
+        {{- end }}
       volumes:
+        {{- if .Values.dnsResolver.enabled }}
+        - name: dns-config
+          hostPath:
+            path: /var/lib/carbide/dns
+            type: DirectoryOrCreate
+        - name: dns-run
+          hostPath:
+            path: /run/carbide-dns
+            type: DirectoryOrCreate
+        {{- end }}
         {{- if .Values.useNodeTokens }}
         # No credentials-directory volume at all in token mode: nothing in this
         # pod is entitled to the machine key.

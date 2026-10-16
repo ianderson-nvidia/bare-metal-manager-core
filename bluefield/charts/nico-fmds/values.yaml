@@ -18,7 +18,7 @@ rootCaFile: forge_root.pem
 # fetched from the dpu-agent's local API socket (<certsDir>/run/agent.sock)
 # instead of the machine mTLS cert/key.
 #
-# The pod then mounts exactly two paths: <certsDir>/pub, which holds the trust
+# The FMDS container then mounts two paths: <certsDir>/pub, which holds the trust
 # anchor and nothing else, and the socket directory. It does not mount the
 # credentials directory at all, so the machine private key is absent from the
 # pod rather than merely read-only. That distinction matters because the
@@ -36,6 +36,14 @@ rootCaFile: forge_root.pem
 # chart fails at template time rather than let fmds wait for a CA that is
 # never coming. Both remain overridable in cert mode.
 useNodeTokens: false
+
+### Optional DNS resolver in the FMDS pod network namespace.
+# Enable together with nico-dpu-agent's dnsResolver.enabled. The agent writes
+# /var/lib/carbide/dns/unbound.conf and reloads Unbound through its Unix socket
+# in /run/carbide-dns. Both are directory mounts, so zone changes need no pod
+# restart.
+dnsResolver:
+  enabled: false
 
 ### Service specific values ###
 # Optional primary tenant metadata listener address override. Unset by default.

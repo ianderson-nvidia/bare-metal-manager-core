@@ -150,6 +150,9 @@ spec:
             - run
             - "--hbn-config-mode=nvue-rest"
             - "--agent-platform-type=containerized"
+            {{- if .Values.dnsResolver.enabled }}
+            - "--dns-resolver"
+            {{- end }}
             - "--dhcp-grpc-server=http://carbide-dpf-cluster-{{ .Values.dhcp_server.service_name }}.dpf-operator-system.svc.cluster.local:10079"
             - "--fmds-grpc-server=http://carbide-dpf-cluster-{{ .Values.fmds.service_name }}.dpf-operator-system.svc.cluster.local:50052"
             {{- if not (empty .Values.dhcp_server.interface_prepend) }}
@@ -210,6 +213,13 @@ spec:
                   name: {{ .Values.hbn.nvue_credentials_secret_name }}
                   key: {{ .Values.hbn.nvue_password_key }}
           volumeMounts:
+            {{- if .Values.dnsResolver.enabled }}
+            - name: dns-config
+              mountPath: /var/lib/carbide/dns
+            - name: dns-run
+              mountPath: /run/carbide-dns
+              readOnly: true
+            {{- end }}
             {{- if $agentConfigEnabled }}
             - name: agent-config
               mountPath: /etc/forge/config.toml
@@ -265,6 +275,16 @@ spec:
               mountPath: /host-sys
               readOnly: true
       volumes:
+        {{- if .Values.dnsResolver.enabled }}
+        - name: dns-config
+          hostPath:
+            path: /var/lib/carbide/dns
+            type: DirectoryOrCreate
+        - name: dns-run
+          hostPath:
+            path: /run/carbide-dns
+            type: DirectoryOrCreate
+        {{- end }}
         {{- if $agentConfigEnabled }}
         - name: agent-config
           configMap:

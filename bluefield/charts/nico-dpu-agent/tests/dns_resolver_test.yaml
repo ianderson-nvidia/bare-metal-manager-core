@@ -1,0 +1,52 @@
+suite: optional DNS resolver management
+templates:
+  - daemonset.yaml
+tests:
+  - it: leaves resolver management disabled by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --dns-resolver
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: dns-config
+          any: true
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: dns-run
+          any: true
+
+  - it: lets the agent publish configuration and connect to the resolver socket
+    set:
+      dnsResolver.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --dns-resolver
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: dns-config
+            mountPath: /var/lib/carbide/dns
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: dns-run
+            mountPath: /run/carbide-dns
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: dns-config
+            hostPath:
+              path: /var/lib/carbide/dns
+              type: DirectoryOrCreate
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: dns-run
+            hostPath:
+              path: /run/carbide-dns
+              type: DirectoryOrCreate

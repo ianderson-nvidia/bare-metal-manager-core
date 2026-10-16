@@ -948,6 +948,7 @@ fn build_dpf_init_config(
             service_vpc_slots,
             &carbide_config.node_auth,
             carbide_config.ewethers_config.as_ref(),
+            carbide_config.dpf.dns.is_some(),
         ))
         .num_of_vfs(carbide_config.dpu_config.num_of_vfs)
         .pf_total_sf_reserved(carbide_config.dpf.pf_total_sf_reserved)
@@ -994,6 +995,9 @@ async fn initialize_dpf_sdk(
     // Reject unsafe global ServiceInterfaces even when DPF is disabled so a dormant Astra
     // configuration cannot become unsafe merely by enabling DPF later.
     carbide_config.dpf.validate_service_interface_scoping()?;
+    if let Some(dns) = &carbide_config.dpf.dns {
+        dns.validate().context("validate DPF DNS upstreams")?;
+    }
     // Reject incompatible service-VPC topology even when DPF is disabled.
     carbide_config.validate_service_vpc_slots()?;
 

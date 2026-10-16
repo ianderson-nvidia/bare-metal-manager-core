@@ -5499,6 +5499,17 @@ message ManagedHostNetworkConfigResponse {
   // explicitly configured zero remains present.
   optional uint32 dhcpv6_server_preference = 25;
 
+  // Complete desired DNS resolver configuration, sent when DPF is enabled
+  // and the site opts into the shared infrastructure DNS view. Only an
+  // explicitly enabled containerized agent reconciles this configuration;
+  // other agents ignore it.
+  // An agent with DNS reconciliation enabled reports an error on omission,
+  // retaining its persisted resolver configuration. Initial readiness waits
+  // for a valid configuration. Removing the site opt-in disables the agent's
+  // DNS reconciliation and removes the resolver deployment. Changes are
+  // independent of network config versions.
+  dns.DpuDnsConfig dns_config = 26;
+
   // Enable forge DHCP on HBN.
   // Deprecated: It is always enabled now.
   bool enable_dhcp = 100;

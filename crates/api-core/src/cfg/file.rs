@@ -1896,6 +1896,10 @@ pub struct DpfConfig {
     /// Enables DPF deployment.
     #[serde(default)]
     pub enabled: bool,
+    /// Opts DPF-managed DPUs into a shared caching resolver for the
+    /// infrastructure DNS view. Omission disables deployment and reconciliation.
+    #[serde(default)]
+    pub dns: Option<DpfDnsConfig>,
     /// Opts the DPF namespace into deployment-scoped DPUServiceInterfaces.
     /// BF3 sites (including BF3 GB200) and generic BF4 use the default
     /// unscoped mode; BF4 Astra requires this to be enabled. When enabled, initialization
@@ -1978,6 +1982,7 @@ impl Default for DpfConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            dns: None,
             deployment_scoped_service_interfaces: false,
             pf_total_sf_reserved: default_dpf_pf_total_sf_reserved(),
             dpu_service_sync_enabled: default_to_true(),
@@ -1989,6 +1994,47 @@ impl Default for DpfConfig {
             extra_bfcfg_parameters: Vec::new(),
             deployments: DpfDeploymentsConfig::default(),
         }
+    }
+}
+
+/// `DpfDnsConfig` selects upstreams for the optional DPF DPU caching DNS resolver.
+///
+/// Both lists are required and nonempty. Addresses are IPv4 or IPv6 literals
+/// without a port; queries use UDP/TCP port 53 through the pod network.
+/// Loopback, unspecified, multicast, broadcast and the resolver's own
+/// `169.254.169.254` listener address are rejected. List order does not imply
+/// preference.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DpfDnsConfig {
+    /// Carbide authoritative DNS endpoints for live infrastructure forward zones.
+    pub authoritative_servers: Vec<IpAddr>,
+    /// Recursive DNS endpoints for names outside Carbide's served forward zones.
+    pub recursive_servers: Vec<IpAddr>,
+}
+
+impl DpfDnsConfig {
+    /// `validate` rejects empty upstream lists and addresses that cannot reach
+    /// an upstream DNS server from the resolver's pod network.
+    pub(crate) fn validate(&self) -> eyre::Result<()> {
+        for (name, servers) in [
+            ("authoritative_servers", &self.authoritative_servers),
+            ("recursive_servers", &self.recursive_servers),
+        ] {
+            eyre::ensure!(!servers.is_empty(), "dpf.dns.{name} must not be empty");
+            for server in servers {
+                let canonical = server.to_canonical();
+                eyre::ensure!(
+                    !canonical.is_unspecified()
+                        && !canonical.is_loopback()
+                        && !canonical.is_multicast()
+                        && !matches!(canonical, IpAddr::V4(address) if address.is_broadcast())
+                        && canonical != IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)),
+                    "dpf.dns.{name} contains unusable upstream address {server}"
+                );
+            }
+        }
+        Ok(())
     }
 }
 
@@ -4970,6 +5016,49 @@ mod tests {
     use model::vpc::VpcRoutingProfileOverrides;
 
     use super::*;
+
+    #[test]
+    fn dpf_dns_requires_usable_upstreams() {
+        value_scenarios!(
+            run = |input: &str| {
+                Figment::new()
+                    .merge(Toml::string(input))
+                    .extract::<DpfDnsConfig>()
+                    .is_ok_and(|config| config.validate().is_ok())
+            };
+            "IPv4 and IPv6 upstreams" {
+                r#"authoritative_servers = ["192.0.2.53", "2001:db8::53"]
+                    recursive_servers = ["198.51.100.53"]"# => true,
+            }
+            "both upstream lists are required" {
+                r#"authoritative_servers = ["192.0.2.53"]"# => false,
+                r#"authoritative_servers = []
+                    recursive_servers = ["198.51.100.53"]"# => false,
+                r#"authoritative_servers = ["192.0.2.53"]
+                    recursive_servers = []"# => false,
+            }
+            "upstreams are IP literals" {
+                r#"authoritative_servers = ["carbide-dns.example.test"]
+                    recursive_servers = ["198.51.100.53"]"# => false,
+            }
+            "listener cannot forward to itself" {
+                r#"authoritative_servers = ["169.254.169.254"]
+                    recursive_servers = ["198.51.100.53"]"# => false,
+                r#"authoritative_servers = ["192.0.2.53"]
+                    recursive_servers = ["::ffff:169.254.169.254"]"# => false,
+            }
+            "upstreams must identify a remote unicast server" {
+                r#"authoritative_servers = ["0.0.0.0"]
+                    recursive_servers = ["198.51.100.53"]"# => false,
+                r#"authoritative_servers = ["192.0.2.53"]
+                    recursive_servers = ["::1"]"# => false,
+                r#"authoritative_servers = ["192.0.2.53"]
+                    recursive_servers = ["ff02::1"]"# => false,
+                r#"authoritative_servers = ["255.255.255.255"]
+                    recursive_servers = ["198.51.100.53"]"# => false,
+            }
+        );
+    }
 
     /// Disabling both bearer tokens and machine mTLS would lock every node out
     /// of the API; validation must refuse the combination, and each mechanism

@@ -787,6 +787,7 @@ enum NonHbnInputChange {
     DeprecatedDenyPrefixes,
     NtpServers,
     Dhcpv6ServerPreference,
+    DnsConfig,
     HostInterfaceId,
     ExtensionServices,
     AstraConfig,
@@ -809,6 +810,13 @@ impl NonHbnInputChange {
                 .push("192.0.2.0/24".to_string()),
             Self::NtpServers => config.ntp_servers.push("10.40.0.3".to_string()),
             Self::Dhcpv6ServerPreference => config.dhcpv6_server_preference = Some(0),
+            Self::DnsConfig => {
+                config.dns_config = Some(::rpc::dns::DpuDnsConfig {
+                    authoritative_servers: vec!["192.0.2.53".to_string()],
+                    recursive_servers: vec!["192.0.2.54".to_string()],
+                    authoritative_zones: vec!["site.example.".to_string()],
+                });
+            }
             Self::HostInterfaceId => {
                 config.host_interface_id = Some("7340b4f5-1721-4dd3-8fc3-9f91a4c29f61".to_string());
             }
@@ -843,6 +851,7 @@ fn current_network_version_ignores_non_hbn_inputs() {
             NonHbnInputChange::MinimumFunctioningLinks => true,
             NonHbnInputChange::ExtensionServices => true,
             NonHbnInputChange::AstraConfig => true,
+            NonHbnInputChange::DnsConfig => true,
             NonHbnInputChange::AdminNetworkTransition => true,
         }
         "startup, status, DHCP-only, and deprecated inputs" {

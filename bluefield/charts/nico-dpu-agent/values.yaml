@@ -12,6 +12,13 @@ exposedPorts:
 ### Cert directory on the host (also used as the container mountPath).
 certsDir: /opt/forge
 
+### Optional management of the Unbound resolver in the FMDS pod.
+# Enable together with nico-fmds's dnsResolver.enabled. The agent writes
+# /var/lib/carbide/dns/unbound.conf and requests reloads through the shared
+# /run/carbide-dns Unix socket directory.
+dnsResolver:
+  enabled: false
+
 ### Bootstrap CA source. The default preserves the legacy PXE download and
 ### renders the historical bare `init-container` invocation.
 bootstrapCa:

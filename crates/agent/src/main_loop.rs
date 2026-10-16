@@ -48,6 +48,7 @@ use tracing::error;
 use version_compare::Version;
 
 use crate::command_line::HbnConfigMode;
+use crate::dns_resolver::DnsResolver;
 use crate::dpu::DpuNetworkInterfaces;
 use crate::dpu::interface::Interface;
 use crate::dpu::route::{DpuRoutePlan, IpRoute, Route};
@@ -88,6 +89,10 @@ pub(super) async fn setup_and_run(
     agent_config: AgentConfig,
     options: command_line::RunOptions,
 ) -> eyre::Result<()> {
+    if options.dns_resolver && !options.agent_platform_type.is_containerized() {
+        eyre::bail!("--dns-resolver requires --agent-platform-type containerized");
+    }
+
     systemd::notify_start().await?;
     tracing::info!(
         version = carbide_version::version!(),
@@ -445,6 +450,7 @@ pub(super) async fn setup_and_run(
         machine_id,
         periodic_config_reader,
         fmds_updater,
+        dns_resolver: options.dns_resolver.then(DnsResolver::default),
         client_cert_renewer,
         hbn_device_names,
         is_hbn_up: false,
@@ -489,6 +495,7 @@ struct MainLoop {
     build_version: String,
     periodic_config_reader: Box<periodic_config_fetcher::PeriodicConfigFetcherReader>,
     fmds_updater: FmdsUpdater,
+    dns_resolver: Option<DnsResolver>,
     client_cert_renewer: ClientCertRenewer,
     hbn_device_names: HBNDeviceNames,
     is_hbn_up: bool,
@@ -514,7 +521,8 @@ struct MainLoop {
     nvue_context: Option<NvueClientContext>,
     dhcp_interface_translation_mode: Option<InterfaceTranslationMode>,
     /// Backs the metrics endpoint's `/ready`. Sticky: only ever flips to ready
-    /// (never back to not-ready) once the first HBN+DHCP+FMDS apply succeeds
+    /// (never back to not-ready) once HBN, DHCP, FMDS, and the enabled DNS
+    /// resolver have all applied their configuration
     /// in containerized (DPF) mode; unused in DpuOs mode.
     health_controller: metrics_endpoint::HealthController,
     current_network_version: CurrentNetworkVersion,
@@ -656,6 +664,10 @@ impl CurrentNetworkVersion {
         // DHCP is reconciled before this HBN skip decision on every iteration.
         config.ntp_servers.clear();
         config.dhcpv6_server_preference = None;
+
+        // DNS has its own reload and retry path on every iteration. Zone
+        // changes must not cause HBN to reload.
+        config.dns_config = None;
 
         // `host_interface_id` helps resolve the host machine ID when the agent
         // starts, but a later change does not affect HBN rendering.
@@ -976,8 +988,8 @@ impl MainLoop {
         let mut is_healthy = false;
         let mut has_changed_configs = false;
         let mut has_changed_hbn_config = false;
-        // Readiness gate: only set once HBN+DHCP apply and the FMDS push both
-        // succeed in the same iteration. See `self.health_controller`.
+        // Readiness requires every enabled service to apply its config in
+        // the same iteration. See `self.health_controller`.
         let mut hbn_dhcp_applied_ok = false;
         let mut current_host_network_config_version = None;
         let mut current_instance_network_config_version = None;
@@ -1019,6 +1031,18 @@ impl MainLoop {
         // `read` does not block
         match self.periodic_config_reader.net_conf_read() {
             Some(conf) => {
+                // Write the first config even while HBN is starting: the
+                // Unbound sidecar waits for this file before it can listen.
+                // Keep retrying independently of the HBN version comparison.
+                let dns_result = match (&mut self.dns_resolver, &conf.dns_config) {
+                    (None, _) => Ok(()),
+                    (Some(resolver), Some(config)) => resolver.reconcile(config).await,
+                    (Some(_), None) => Err(eyre::eyre!(
+                        "DNS resolver is enabled but the API supplied no DNS configuration"
+                    )),
+                };
+                let dns_applied_ok = dns_result.is_ok();
+
                 // DHCP server only runs on the primary dpu or when using the tenant network
                 if !conf.use_admin_network || conf.is_primary_dpu {
                     status_out.last_dhcp_requests =
@@ -1287,6 +1311,21 @@ impl MainLoop {
                     }
                 }
 
+                if let Err(err) = dns_result {
+                    tracing::error!(
+                        error = format!("{err:#}"),
+                        "Applying DNS resolver configuration"
+                    );
+                    let dns_error = format!("dns={err:#}");
+                    match &mut status_out.network_config_error {
+                        Some(error) => {
+                            error.push_str(", ");
+                            error.push_str(&dns_error);
+                        }
+                        None => status_out.network_config_error = Some(dns_error),
+                    }
+                }
+
                 // Feed the latest instance metadata to FMDS and acknowledge it
                 // Note: Performing the update here instead of the FMDS mechanism directly
                 // pulling the Metadata is preferred - since the mainloop will make sure
@@ -1299,13 +1338,14 @@ impl MainLoop {
                     .update(instance_data.clone(), Some(conf.clone()))
                     .await;
 
-                // Mark the pod Ready once HBN, DHCP, and FMDS have all been
+                // Mark the pod Ready once all enabled services have been
                 // applied successfully in the same iteration. Sticky: never
                 // reset back to not-ready by a later failure. No-op in DpuOs
                 // mode, which has no readiness probe wired up.
                 if self.options.agent_platform_type.is_containerized()
                     && hbn_dhcp_applied_ok
                     && fmds_applied_ok
+                    && dns_applied_ok
                 {
                     self.health_controller.set_ready(true);
                 }

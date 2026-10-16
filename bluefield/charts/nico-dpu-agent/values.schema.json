@@ -5,6 +5,18 @@
   "type": "object",
   "required": ["serviceDaemonSet", "lldpSidecar"],
   "properties": {
+    "dnsResolver": {
+      "type": "object",
+      "description": "Optional management of Unbound; enable together with FMDS's dnsResolver.enabled",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Reconcile Unbound configuration and reload it through the shared control socket"
+        }
+      }
+    },
     "serviceDaemonSet": {
       "type": "object",
       "description": "Configuration for the service DaemonSet",

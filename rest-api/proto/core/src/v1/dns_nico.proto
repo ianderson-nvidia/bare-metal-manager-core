@@ -10,6 +10,20 @@ import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/NVIDIA/infra-controller/rest-api/proto/core";
 
+// Complete desired configuration for the DPF DPU's shared caching resolver.
+// All clients of the resolver share the infrastructure DNS view.
+message DpuDnsConfig {
+  // Nonempty list of nico-dns IP literals, reached on UDP/TCP port 53
+  // through the pod network. Used as authoritative stub-zone destinations.
+  repeated string authoritative_servers = 1;
+  // Nonempty list of recursive upstream IP literals on UDP/TCP port 53.
+  // Queries outside authoritative_zones are forwarded to these servers.
+  repeated string recursive_servers = 2;
+  // Complete sorted, deduplicated list of live infrastructure forward zones,
+  // in lowercase with a trailing dot. Empty means only default forwarding.
+  repeated string authoritative_zones = 3;
+}
+
 message DnsResourceRecordLookupRequest {
   string qtype = 1;
   string qname = 2;

@@ -5,6 +5,18 @@
   "type": "object",
   "required": ["serviceDaemonSet"],
   "properties": {
+    "dnsResolver": {
+      "type": "object",
+      "description": "Optional Unbound sidecar; enable together with the DPU agent's dnsResolver.enabled",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run Unbound with the agent-managed configuration and control socket directory mounts"
+        }
+      }
+    },
     "serviceDaemonSet": {
       "type": "object",
       "description": "Configuration for the service DaemonSet",

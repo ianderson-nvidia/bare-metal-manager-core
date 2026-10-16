@@ -532,6 +532,7 @@ pub(crate) fn dts_service(cfg: &DpfServiceConfig) -> ServiceDefinition {
 fn dpu_agent_helm_values(
     cfg: &DpfServiceConfig,
     bootstrap_ca: &DpfDpuAgentBootstrapCa,
+    dns_enabled: bool,
 ) -> serde_json::Value {
     let mut values = serde_json::json!({
         "image": {
@@ -574,6 +575,8 @@ fn dpu_agent_helm_values(
             .insert("bootstrapCa".to_string(), bootstrap_ca_values);
     }
     apply_helm_values(&mut values, cfg);
+    // The site DNS setting determines the agent's resolver management mode.
+    values["dnsResolver"] = serde_json::json!({ "enabled": dns_enabled });
 
     values
 }
@@ -582,9 +585,10 @@ fn dpu_agent_helm_values(
 pub(crate) fn dpu_agent_service(
     cfg: &DpfServiceConfig,
     bootstrap_ca: &DpfDpuAgentBootstrapCa,
+    dns_enabled: bool,
 ) -> ServiceDefinition {
     ServiceDefinition {
-        helm_values: Some(dpu_agent_helm_values(cfg, bootstrap_ca)),
+        helm_values: Some(dpu_agent_helm_values(cfg, bootstrap_ca, dns_enabled)),
 
         service_daemon_set_annotations: Some(BTreeMap::new()),
 
@@ -657,6 +661,7 @@ pub(crate) fn fmds_service(
     cfg: &DpfServiceConfig,
     dpu_interfaces: &[DpuServiceInterfaceTemplateDefinition],
     use_node_tokens: bool,
+    dns_enabled: bool,
 ) -> ServiceDefinition {
     let mut helm_values = serde_json::json!({
         "image": {
@@ -672,6 +677,8 @@ pub(crate) fn fmds_service(
         &["useNodeTokens"],
         serde_json::json!(use_node_tokens),
     );
+    // The site DNS setting determines whether the resolver is deployed.
+    helm_values["dnsResolver"] = serde_json::json!({ "enabled": dns_enabled });
     ServiceDefinition {
         helm_values: Some(helm_values),
 
@@ -878,6 +885,7 @@ pub(crate) fn doca_xplane_service(cfg: &DpfServiceConfig) -> ServiceDefinition {
 ///
 /// `node_auth` mirrors the API's `[node_auth]` section: fmds token mode follows
 /// `enabled` unless `fmds_use_node_tokens` overrides it (issue #355).
+/// `dns_enabled` deploys Unbound and enables the agent's shared config mounts together.
 pub(crate) fn mandatory_services(
     resolved: &DpfResolvedMandatoryServicesConfig,
     bootstrap_ca: &DpfDpuAgentBootstrapCa,
@@ -885,6 +893,7 @@ pub(crate) fn mandatory_services(
     service_vpc_slots: ServiceVpcSlots,
     node_auth: &NodeAuthConfig,
     ewethers_config: Option<&EwEthersConfig>,
+    dns_enabled: bool,
 ) -> Vec<ServiceDefinition> {
     // Slot listeners attach directly to their own bridge, so each needs its own NAD.
     let mut dhcp = dhcp_server_service(&resolved.base.dhcp_server, interfaces);
@@ -893,13 +902,14 @@ pub(crate) fn mandatory_services(
         dts_service(&resolved.base.dts),
         doca_hbn_service(&resolved.base.doca_hbn, interfaces, service_vpc_slots),
         dhcp,
-        dpu_agent_service(&resolved.base.dpu_agent, bootstrap_ca),
+        dpu_agent_service(&resolved.base.dpu_agent, bootstrap_ca, dns_enabled),
         // Not `node_auth.enabled` directly: an operator staging a disable
         // moves fmds off tokens first, while the API still accepts them.
         fmds_service(
             &resolved.base.fmds,
             interfaces,
             node_auth.fmds_use_node_tokens(),
+            dns_enabled,
         ),
         otelcol_service(&resolved.base.otel),
     ];
@@ -936,6 +946,39 @@ mod tests {
     use super::*;
 
     const TEST_NS: &str = "dpf-operator-system";
+
+    #[test]
+    fn dns_deployment_settings_follow_site_configuration() {
+        value_scenarios!(
+            run = |enabled| {
+                let mut config = crate::cfg::file::DpfConfig::default();
+                let base = config.services.as_mut();
+                for service in [&mut base.dpu_agent, &mut base.fmds] {
+                    service.extra_helm_values = serde_json::json!({
+                        "dnsResolver": { "enabled": !enabled }
+                    }).as_object().cloned();
+                }
+                let services = mandatory_services(
+                    &config.resolved_services_for(&config.deployments.bf3, DpuDeploymentType::Bf3),
+                    &config.dpu_agent_bootstrap_ca,
+                    &[],
+                    ServiceVpcSlots::default(),
+                    &NodeAuthConfig::default(),
+                    None,
+                    enabled,
+                );
+                [DPU_AGENT_SERVICE_NAME, FMDS_SERVICE_NAME].map(|name| {
+                    services.iter()
+                        .find(|service| service.name == name)
+                        .and_then(|service| service.helm_values.as_ref())
+                        .and_then(|values| values["dnsResolver"]["enabled"].as_bool())
+                        .expect("mandatory service renders DNS switch")
+                })
+            };
+            "site opt-in enables both services" { true => [true, true], }
+            "overlay cannot opt in" { false => [false, false], }
+        );
+    }
 
     /// HBN configuration follows the platform inventory used to build service chains.
     #[test]
@@ -1020,6 +1063,7 @@ mod tests {
                 service_vpc_slots,
                 &NodeAuthConfig::default(),
                 None,
+                false,
             );
             carbide_dpf::InitDpfResourcesConfigBuilder::default()
                 .deployment_type(DpuDeploymentType::Bf3)
@@ -1220,6 +1264,7 @@ mod tests {
                 dpu_agent_helm_values(
                     &default_dpu_agent_service(),
                     &policy,
+                    false,
                 )
                     .get("bootstrapCa")
                     .cloned()
@@ -1384,6 +1429,7 @@ mod tests {
         let dpu_agent = dpu_agent_service(
             &default_dpu_agent_service(),
             &DpfDpuAgentBootstrapCa::default(),
+            false,
         );
         assert!(
             dpu_agent
@@ -1397,7 +1443,7 @@ mod tests {
         // When a pull secret is configured, the block is emitted with its name.
         let mut cfg = default_dpu_agent_service();
         cfg.docker_image_pull_secret = Some("nico-pull-secret".to_string());
-        let agent = dpu_agent_service(&cfg, &DpfDpuAgentBootstrapCa::default());
+        let agent = dpu_agent_service(&cfg, &DpfDpuAgentBootstrapCa::default(), false);
         assert_eq!(
             agent.helm_values.unwrap()["imagePullSecrets"],
             serde_json::json!([{ "name": "nico-pull-secret" }])
@@ -1417,7 +1463,7 @@ mod tests {
         })
         .as_object()
         .cloned();
-        let service = dpu_agent_service(&config, &DpfDpuAgentBootstrapCa::default());
+        let service = dpu_agent_service(&config, &DpfDpuAgentBootstrapCa::default(), false);
         let template = build_service_template(&service, TEST_NS, "");
         let values = template.spec.helm_chart.values.unwrap();
 
@@ -1545,6 +1591,7 @@ mod tests {
             ServiceVpcSlots::default(),
             &NodeAuthConfig::default(),
             Some(&ewethers_config),
+            false,
         )
         .into_iter()
         .find(|service| service.name == DOCA_WEAVE_FLOW_CONTROLLER_SERVICE_NAME)
@@ -1827,6 +1874,7 @@ mod tests {
                 ServiceVpcSlots::default(),
                 node_auth,
                 None,
+                false,
             )
             .into_iter()
             .find(|s| s.name == FMDS_SERVICE_NAME)
@@ -1866,7 +1914,7 @@ mod tests {
             .as_object()
             .cloned();
 
-        let service = fmds_service(&cfg, &[], false);
+        let service = fmds_service(&cfg, &[], false, false);
         let values = service.helm_values.expect("fmds renders helm values");
 
         assert_eq!(

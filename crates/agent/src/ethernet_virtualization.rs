@@ -4409,6 +4409,7 @@ esac
         };
         rpc::ManagedHostNetworkConfigResponse {
             service_interfaces: vec![],
+            dns_config: None,
             service_vpc_slot_inventory: None,
             asn: 4259912557,
             datacenter_asn: 11414,
@@ -5233,6 +5234,7 @@ esac
 
         let mut network_config = rpc::ManagedHostNetworkConfigResponse {
             service_interfaces: vec![],
+            dns_config: None,
             service_vpc_slot_inventory: None,
             bgp_leaf_session_password: None,
             site_global_vpc_vni: None,
@@ -5510,6 +5512,7 @@ esac
         };
         let network_config = rpc::ManagedHostNetworkConfigResponse {
             service_interfaces: vec![],
+            dns_config: None,
             service_vpc_slot_inventory: None,
             bgp_leaf_session_password: None,
             site_global_vpc_vni: None,

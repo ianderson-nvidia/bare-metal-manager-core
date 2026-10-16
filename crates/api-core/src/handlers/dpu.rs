@@ -702,6 +702,51 @@ async fn get_managed_host_network_config_inner(
         Vec::new()
     };
 
+    // DNS zones change independently of host networking. Read them on every
+    // agent poll so additions and removals do not require an HBN version bump.
+    let dns_config = if api.runtime_config.dpf.enabled
+        && let Some(dns) = &api.runtime_config.dpf.dns
+    {
+        let domains = db::dns::domain::find_by(
+            &mut txn,
+            ObjectColumnFilter::<db::dns::domain::IdColumn>::All,
+        )
+        .await?;
+        let reverse_roots = ["in-addr.arpa.", "ip6.arpa."]
+            .map(|root| model::dns::Fqdn::parse(root).expect("valid reverse DNS root"));
+        let mut authoritative_zones = Vec::new();
+        for domain in domains.into_iter().filter(|domain| domain.vpc_id.is_none()) {
+            let zone = model::dns::Fqdn::parse(&domain.name).map_err(|error| {
+                CarbideError::internal(format!(
+                    "domain {} has an unparsable name {:?}: {error}",
+                    domain.id, domain.name
+                ))
+            })?;
+            // Match Carbide's infrastructure forward-zone authority.
+            if reverse_roots.iter().any(|root| zone.is_within(root)) {
+                continue;
+            }
+            authoritative_zones.push(zone.to_string());
+        }
+        authoritative_zones.sort();
+        authoritative_zones.dedup();
+        Some(::rpc::dns::DpuDnsConfig {
+            authoritative_servers: dns
+                .authoritative_servers
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            recursive_servers: dns
+                .recursive_servers
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            authoritative_zones,
+        })
+    } else {
+        None
+    };
+
     // Next, get credentials for each extension service from vault. This should be done after the
     // transaction is committed.
     txn.commit().await?;
@@ -739,6 +784,7 @@ async fn get_managed_host_network_config_inner(
     let astra_config = get_astra_config(api, &snapshot).await?;
 
     let resp = rpc::ManagedHostNetworkConfigResponse {
+        dns_config,
         // TODO(Service VPC): Populate these fields for the authenticated receiving
         // DPU when managed-host responses include service networking.
         service_interfaces: vec![],

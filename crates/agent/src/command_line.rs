@@ -333,6 +333,13 @@ pub struct RunOptions {
     pub fmds_grpc_server: Option<String>,
     #[clap(
         long,
+        help = "Configure the Unbound sidecar in containerized mode using \
+                /var/lib/carbide/dns/unbound.conf and /run/carbide-dns/control.sock. \
+                Requires the shared directories and DNS configuration from the API."
+    )]
+    pub dns_resolver: bool,
+    #[clap(
+        long,
         default_value = "3",
         value_parser = clap::value_parser!(u64).range(1..),
         help = "Seconds to wait for one connection attempt to --fmds-grpc-server. The agent \

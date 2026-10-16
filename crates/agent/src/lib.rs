@@ -53,6 +53,7 @@ mod command_line;
 pub mod containerd;
 mod dhcp;
 mod dhcp_server_grpc_client;
+mod dns_resolver;
 mod ethernet_virtualization;
 use carbide_uuid::machine::DpuMachineId;
 pub use ethernet_virtualization::FPath;

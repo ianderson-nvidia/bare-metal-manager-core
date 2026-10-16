@@ -19,22 +19,18 @@
 # build-artifacts-container-cross-aarch64 image and copied into this
 # minimal runtime container.
 
-ARG CC_VERSION=v3.2.1 # NVIDIA Distroless Container version
-ARG TAG=${CC_VERSION}
-ARG IMG=nvcr.io/nvidia/distroless/cc
-ARG DEBUG_DISTROLESS=true
-ARG DISTROLESS_DEBUG_TAG=${DEBUG_DISTROLESS:+"dev"} # 'dev' provides a busybox shell
-
-# NVIDIA Distroless Container
+ARG DEBIAN_IMAGE=debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+ARG RUNTIME_IMAGE=nvcr.io/nvidia/distroless/cc:v3.2.1-dev@sha256:3f6fe2b7e87f25d8c665d2caf80763ca691a1a6dfd2ac5a6b6f14c161108f0d4
 
 # Stage 1
 
-FROM --platform=linux/arm64 debian:bookworm-slim AS builder
+FROM --platform=linux/arm64 ${DEBIAN_IMAGE} AS builder
 
 # Get libraries and install MFT (provides flint for DPU firmware enumeration)
 RUN apt-get update && apt-get install -y \
      libudev1 \
-     bash
+     bash \
+     unbound
 
 # Working flint extraction
 COPY mft-4.35.0-159-aarch64-deb/DEBS/mft_4.35.0-159_arm64.deb /tmp/mstflint.deb
@@ -49,14 +45,21 @@ RUN mkdir -p /deps && \
 RUN mkdir -p /deps && \
     cp $(ldd /bin/bash | grep "=> /" | awk '{print $3}') /deps/
 
+# The agent validates files and reloads the resolver through its Unix socket.
+# Copy the tools' complete dependency set; they run without a Debian rootfs.
+RUN ldd /usr/sbin/unbound-checkconf /usr/sbin/unbound-control \
+      | awk '$2 == "=>" && $3 ~ /^\// { print $3 }' \
+      | sort -u | xargs -r cp -t /deps/
+
 # Stage 2
-FROM --platform=linux/arm64 ${IMG}:${TAG}-${DISTROLESS_DEBUG_TAG}
+FROM --platform=linux/arm64 ${RUNTIME_IMAGE}
 
 # Copy bash binary, libraries, and mft from builder
 COPY --from=builder /lib/aarch64-linux-gnu/libudev.so.1 /lib/aarch64-linux-gnu/libudev.so.1
 COPY --from=builder --chmod=755 /bin/bash /bin/bash
 COPY --from=builder --chmod=755 /extract/usr/bin/ /usr/bin/
 COPY --from=builder /deps/* /lib/
+COPY --from=builder /usr/sbin/unbound-checkconf /usr/sbin/unbound-control /usr/sbin/
 
 # Copy forge-dpu-agent and set entry point
 COPY --chmod=755 target/aarch64-unknown-linux-gnu/release/forge-dpu-agent /usr/bin/forge-dpu-agent

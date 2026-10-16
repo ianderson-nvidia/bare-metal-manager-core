@@ -288,6 +288,103 @@ async fn test_clear_use_admin_network_changed_requires_pending_version(pool: sql
 }
 
 #[crate::sqlx_test]
+async fn dpf_dns_tracks_served_domains_without_network_version_changes(pool: sqlx::PgPool) {
+    let mut config = api_fixtures::get_config();
+    config.dpf.enabled = true;
+    config.dpf.dns = Some(crate::cfg::file::DpfDnsConfig {
+        authoritative_servers: vec!["192.0.2.53".parse().expect("valid authoritative IP")],
+        recursive_servers: vec!["2001:db8::53".parse().expect("valid recursive IP")],
+    });
+    let env =
+        api_fixtures::create_test_env_with_overrides(pool, TestEnvOverrides::with_config(config))
+            .await;
+    let mh = create_managed_host(&env).await;
+    let poll = || async {
+        env.api
+            .get_managed_host_network_config(tonic::Request::new(ManagedHostNetworkConfigRequest {
+                dpu_machine_id: Some(mh.dpu_ids[0]),
+            }))
+            .await
+            .expect("fetch network configuration")
+            .into_inner()
+    };
+    let (vpc_id, _) =
+        api_fixtures::vpc::create_vpc(&env, "private-dns".to_string(), None, None).await;
+    let mut txn = env.db_txn().await;
+    let mut infrastructure_zone = None;
+    for (name, owner) in [
+        ("zeta.example.test", None),
+        ("alpha.example.test.", None),
+        ("private.example.test", Some(vpc_id)),
+        ("53.113.0.203.in-addr.arpa", None),
+        ("8.b.d.0.1.0.0.2.ip6.arpa", None),
+    ] {
+        let domain = db::dns::domain::persist(
+            model::dns::NewDomain {
+                vpc_id: owner,
+                ..model::dns::NewDomain::new(name)
+            },
+            &mut txn,
+        )
+        .await
+        .expect("create DNS fixture domain");
+        if name == "zeta.example.test" {
+            infrastructure_zone = Some(domain.id);
+        }
+    }
+    txn.commit().await.expect("commit DNS fixture");
+
+    let first = poll().await;
+    assert!(
+        first.use_admin_network,
+        "DNS can initialize before tenant assignment"
+    );
+    assert_eq!(
+        first.dns_config.as_ref().expect("DPF DNS configuration"),
+        &::rpc::dns::DpuDnsConfig {
+            authoritative_servers: vec!["192.0.2.53".to_string()],
+            recursive_servers: vec!["2001:db8::53".to_string()],
+            authoritative_zones: vec![
+                "alpha.example.test.".to_string(),
+                "dwrt1.com.".to_string(),
+                "zeta.example.test.".to_string(),
+            ],
+        }
+    );
+
+    env.api
+        .delete_domain(tonic::Request::new(::rpc::dns::DomainDeletionRequest {
+            id: infrastructure_zone,
+        }))
+        .await
+        .expect("delete served infrastructure domain");
+    env.api
+        .create_domain(tonic::Request::new(::rpc::dns::CreateDomainRequest {
+            name: "bravo.example.test".to_string(),
+            ..Default::default()
+        }))
+        .await
+        .expect("add served infrastructure domain");
+
+    let second = poll().await;
+    assert_eq!(
+        second
+            .dns_config
+            .expect("updated DNS configuration")
+            .authoritative_zones,
+        ["alpha.example.test.", "bravo.example.test.", "dwrt1.com."]
+    );
+    assert_eq!(
+        second.managed_host_config_version,
+        first.managed_host_config_version
+    );
+    assert_eq!(
+        second.instance_network_config_version,
+        first.instance_network_config_version
+    );
+}
+
+#[crate::sqlx_test]
 // This test verifies parity between `addresses` and the compatibility fields,
 // plus presence-bearing site policy carried in the same response.
 #[allow(deprecated)]
@@ -322,6 +419,7 @@ async fn test_managed_host_network_config(pool: sqlx::PgPool) {
         "sites without lo-ip-v6 must remain IPv4-only"
     );
     assert_eq!(response.dhcpv6_server_preference, Some(0));
+    assert!(response.dns_config.is_none(), "DNS requires a site opt-in");
 
     let admin_interface = response.admin_interface.expect("admin interface");
     assert!(admin_interface.ipv6_interface_config.is_none());

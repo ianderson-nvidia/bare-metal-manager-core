@@ -134,6 +134,7 @@ pub(super) fn setup_agent_run_options(
             skip_upgrade_check: false,
             dhcp_grpc_server: None,
             fmds_grpc_server: None,
+            dns_resolver: false,
             fmds_connect_timeout_secs: 3,
             hbn_config_mode: crate::command_line::HbnConfigMode::ContainerExec,
             agent_platform_type: crate::command_line::AgentPlatformType::DpuOs,

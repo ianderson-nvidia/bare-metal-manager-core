@@ -1,0 +1,89 @@
+suite: optional DNS resolver
+templates:
+  - daemonset.yaml
+tests:
+  - it: leaves the resolver and its host directories absent by default
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.containers
+          count: 1
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: dns-config
+          any: true
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: dns-run
+          any: true
+
+  - it: runs Unbound with live directory mounts and no metadata credentials
+    set:
+      dnsResolver.enabled: true
+      image.repository: test/fmds
+      image.tag: test
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.containers
+          count: 2
+      - equal:
+          path: spec.template.spec.containers[1].name
+          value: unbound
+      - equal:
+          path: spec.template.spec.containers[1].image
+          value: test/fmds:test
+      - equal:
+          path: spec.template.spec.containers[1].volumeMounts
+          value:
+            - name: dns-config
+              mountPath: /var/lib/carbide/dns
+              readOnly: true
+            - name: dns-run
+              mountPath: /run/carbide-dns
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: dns-config
+            hostPath:
+              path: /var/lib/carbide/dns
+              type: DirectoryOrCreate
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: dns-run
+            hostPath:
+              path: /run/carbide-dns
+              type: DirectoryOrCreate
+      - equal:
+          path: spec.template.spec.containers[1].securityContext
+          value:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              add: [NET_BIND_SERVICE]
+      - equal:
+          path: spec.template.spec.containers[1].ports
+          value:
+            - name: dns-udp
+              containerPort: 53
+              protocol: UDP
+            - name: dns-tcp
+              containerPort: 53
+              protocol: TCP
+      - equal:
+          path: spec.template.spec.containers[1].readinessProbe.exec.command
+          value:
+            - /usr/sbin/unbound-control
+            - -c
+            - /var/lib/carbide/dns/unbound.conf
+            - status
+      - matchRegex:
+          path: spec.template.spec.containers[1].command[2]
+          pattern: 'until \[ -f /var/lib/carbide/dns/unbound\.conf \]; do'
+      - matchRegex:
+          path: spec.template.spec.containers[1].command[2]
+          pattern: 'exec /usr/sbin/unbound -d -c /var/lib/carbide/dns/unbound\.conf'

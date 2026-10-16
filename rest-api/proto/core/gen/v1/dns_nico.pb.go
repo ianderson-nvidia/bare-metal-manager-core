@@ -101,6 +101,74 @@ func (DnsLookupOutcome) EnumDescriptor() ([]byte, []int) {
 	return file_dns_nico_proto_rawDescGZIP(), []int{0}
 }
 
+// Complete desired configuration for the DPF DPU's shared caching resolver.
+// All clients of the resolver share the infrastructure DNS view.
+type DpuDnsConfig struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Nonempty list of nico-dns IP literals, reached on UDP/TCP port 53
+	// through the pod network. Used as authoritative stub-zone destinations.
+	AuthoritativeServers []string `protobuf:"bytes,1,rep,name=authoritative_servers,json=authoritativeServers,proto3" json:"authoritative_servers,omitempty"`
+	// Nonempty list of recursive upstream IP literals on UDP/TCP port 53.
+	// Queries outside authoritative_zones are forwarded to these servers.
+	RecursiveServers []string `protobuf:"bytes,2,rep,name=recursive_servers,json=recursiveServers,proto3" json:"recursive_servers,omitempty"`
+	// Complete sorted, deduplicated list of live infrastructure forward zones,
+	// in lowercase with a trailing dot. Empty means only default forwarding.
+	AuthoritativeZones []string `protobuf:"bytes,3,rep,name=authoritative_zones,json=authoritativeZones,proto3" json:"authoritative_zones,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *DpuDnsConfig) Reset() {
+	*x = DpuDnsConfig{}
+	mi := &file_dns_nico_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DpuDnsConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DpuDnsConfig) ProtoMessage() {}
+
+func (x *DpuDnsConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_dns_nico_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DpuDnsConfig.ProtoReflect.Descriptor instead.
+func (*DpuDnsConfig) Descriptor() ([]byte, []int) {
+	return file_dns_nico_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *DpuDnsConfig) GetAuthoritativeServers() []string {
+	if x != nil {
+		return x.AuthoritativeServers
+	}
+	return nil
+}
+
+func (x *DpuDnsConfig) GetRecursiveServers() []string {
+	if x != nil {
+		return x.RecursiveServers
+	}
+	return nil
+}
+
+func (x *DpuDnsConfig) GetAuthoritativeZones() []string {
+	if x != nil {
+		return x.AuthoritativeZones
+	}
+	return nil
+}
+
 type DnsResourceRecordLookupRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Qtype         string                 `protobuf:"bytes,1,opt,name=qtype,proto3" json:"qtype,omitempty"`
@@ -115,7 +183,7 @@ type DnsResourceRecordLookupRequest struct {
 
 func (x *DnsResourceRecordLookupRequest) Reset() {
 	*x = DnsResourceRecordLookupRequest{}
-	mi := &file_dns_nico_proto_msgTypes[0]
+	mi := &file_dns_nico_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -127,7 +195,7 @@ func (x *DnsResourceRecordLookupRequest) String() string {
 func (*DnsResourceRecordLookupRequest) ProtoMessage() {}
 
 func (x *DnsResourceRecordLookupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[0]
+	mi := &file_dns_nico_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -140,7 +208,7 @@ func (x *DnsResourceRecordLookupRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DnsResourceRecordLookupRequest.ProtoReflect.Descriptor instead.
 func (*DnsResourceRecordLookupRequest) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{0}
+	return file_dns_nico_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *DnsResourceRecordLookupRequest) GetQtype() string {
@@ -206,7 +274,7 @@ type DnsResourceRecordLookupResponse struct {
 
 func (x *DnsResourceRecordLookupResponse) Reset() {
 	*x = DnsResourceRecordLookupResponse{}
-	mi := &file_dns_nico_proto_msgTypes[1]
+	mi := &file_dns_nico_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -218,7 +286,7 @@ func (x *DnsResourceRecordLookupResponse) String() string {
 func (*DnsResourceRecordLookupResponse) ProtoMessage() {}
 
 func (x *DnsResourceRecordLookupResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[1]
+	mi := &file_dns_nico_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -231,7 +299,7 @@ func (x *DnsResourceRecordLookupResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DnsResourceRecordLookupResponse.ProtoReflect.Descriptor instead.
 func (*DnsResourceRecordLookupResponse) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{1}
+	return file_dns_nico_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *DnsResourceRecordLookupResponse) GetRecords() []*DnsResourceRecord {
@@ -277,7 +345,7 @@ type DnsResourceRecord struct {
 
 func (x *DnsResourceRecord) Reset() {
 	*x = DnsResourceRecord{}
-	mi := &file_dns_nico_proto_msgTypes[2]
+	mi := &file_dns_nico_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -289,7 +357,7 @@ func (x *DnsResourceRecord) String() string {
 func (*DnsResourceRecord) ProtoMessage() {}
 
 func (x *DnsResourceRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[2]
+	mi := &file_dns_nico_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -302,7 +370,7 @@ func (x *DnsResourceRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DnsResourceRecord.ProtoReflect.Descriptor instead.
 func (*DnsResourceRecord) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{2}
+	return file_dns_nico_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *DnsResourceRecord) GetQname() string {
@@ -364,7 +432,7 @@ type DomainMetadata struct {
 
 func (x *DomainMetadata) Reset() {
 	*x = DomainMetadata{}
-	mi := &file_dns_nico_proto_msgTypes[3]
+	mi := &file_dns_nico_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -376,7 +444,7 @@ func (x *DomainMetadata) String() string {
 func (*DomainMetadata) ProtoMessage() {}
 
 func (x *DomainMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[3]
+	mi := &file_dns_nico_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -389,7 +457,7 @@ func (x *DomainMetadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DomainMetadata.ProtoReflect.Descriptor instead.
 func (*DomainMetadata) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{3}
+	return file_dns_nico_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *DomainMetadata) GetAllowAxfrFrom() []string {
@@ -408,7 +476,7 @@ type DomainMetadataRequest struct {
 
 func (x *DomainMetadataRequest) Reset() {
 	*x = DomainMetadataRequest{}
-	mi := &file_dns_nico_proto_msgTypes[4]
+	mi := &file_dns_nico_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -420,7 +488,7 @@ func (x *DomainMetadataRequest) String() string {
 func (*DomainMetadataRequest) ProtoMessage() {}
 
 func (x *DomainMetadataRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[4]
+	mi := &file_dns_nico_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -433,7 +501,7 @@ func (x *DomainMetadataRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DomainMetadataRequest.ProtoReflect.Descriptor instead.
 func (*DomainMetadataRequest) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{4}
+	return file_dns_nico_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *DomainMetadataRequest) GetDomain() string {
@@ -452,7 +520,7 @@ type DomainMetadataResponse struct {
 
 func (x *DomainMetadataResponse) Reset() {
 	*x = DomainMetadataResponse{}
-	mi := &file_dns_nico_proto_msgTypes[5]
+	mi := &file_dns_nico_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -464,7 +532,7 @@ func (x *DomainMetadataResponse) String() string {
 func (*DomainMetadataResponse) ProtoMessage() {}
 
 func (x *DomainMetadataResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[5]
+	mi := &file_dns_nico_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -477,7 +545,7 @@ func (x *DomainMetadataResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DomainMetadataResponse.ProtoReflect.Descriptor instead.
 func (*DomainMetadataResponse) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{5}
+	return file_dns_nico_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *DomainMetadataResponse) GetResult() *DomainMetadata {
@@ -496,7 +564,7 @@ type DomainList struct {
 
 func (x *DomainList) Reset() {
 	*x = DomainList{}
-	mi := &file_dns_nico_proto_msgTypes[6]
+	mi := &file_dns_nico_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -508,7 +576,7 @@ func (x *DomainList) String() string {
 func (*DomainList) ProtoMessage() {}
 
 func (x *DomainList) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[6]
+	mi := &file_dns_nico_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -521,7 +589,7 @@ func (x *DomainList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DomainList.ProtoReflect.Descriptor instead.
 func (*DomainList) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{6}
+	return file_dns_nico_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *DomainList) GetDomains() []*Domain {
@@ -539,7 +607,7 @@ type GetAllDomainsRequest struct {
 
 func (x *GetAllDomainsRequest) Reset() {
 	*x = GetAllDomainsRequest{}
-	mi := &file_dns_nico_proto_msgTypes[7]
+	mi := &file_dns_nico_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -551,7 +619,7 @@ func (x *GetAllDomainsRequest) String() string {
 func (*GetAllDomainsRequest) ProtoMessage() {}
 
 func (x *GetAllDomainsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[7]
+	mi := &file_dns_nico_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -564,7 +632,7 @@ func (x *GetAllDomainsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAllDomainsRequest.ProtoReflect.Descriptor instead.
 func (*GetAllDomainsRequest) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{7}
+	return file_dns_nico_proto_rawDescGZIP(), []int{8}
 }
 
 type GetAllDomainsResponse struct {
@@ -576,7 +644,7 @@ type GetAllDomainsResponse struct {
 
 func (x *GetAllDomainsResponse) Reset() {
 	*x = GetAllDomainsResponse{}
-	mi := &file_dns_nico_proto_msgTypes[8]
+	mi := &file_dns_nico_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -588,7 +656,7 @@ func (x *GetAllDomainsResponse) String() string {
 func (*GetAllDomainsResponse) ProtoMessage() {}
 
 func (x *GetAllDomainsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[8]
+	mi := &file_dns_nico_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -601,7 +669,7 @@ func (x *GetAllDomainsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAllDomainsResponse.ProtoReflect.Descriptor instead.
 func (*GetAllDomainsResponse) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{8}
+	return file_dns_nico_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *GetAllDomainsResponse) GetResult() []*DomainInfo {
@@ -620,7 +688,7 @@ type GetAllRecordsForDomainRequest struct {
 
 func (x *GetAllRecordsForDomainRequest) Reset() {
 	*x = GetAllRecordsForDomainRequest{}
-	mi := &file_dns_nico_proto_msgTypes[9]
+	mi := &file_dns_nico_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -632,7 +700,7 @@ func (x *GetAllRecordsForDomainRequest) String() string {
 func (*GetAllRecordsForDomainRequest) ProtoMessage() {}
 
 func (x *GetAllRecordsForDomainRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[9]
+	mi := &file_dns_nico_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -645,7 +713,7 @@ func (x *GetAllRecordsForDomainRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAllRecordsForDomainRequest.ProtoReflect.Descriptor instead.
 func (*GetAllRecordsForDomainRequest) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{9}
+	return file_dns_nico_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *GetAllRecordsForDomainRequest) GetName() string {
@@ -664,7 +732,7 @@ type GetAllRecordsForDomainResponse struct {
 
 func (x *GetAllRecordsForDomainResponse) Reset() {
 	*x = GetAllRecordsForDomainResponse{}
-	mi := &file_dns_nico_proto_msgTypes[10]
+	mi := &file_dns_nico_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -676,7 +744,7 @@ func (x *GetAllRecordsForDomainResponse) String() string {
 func (*GetAllRecordsForDomainResponse) ProtoMessage() {}
 
 func (x *GetAllRecordsForDomainResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[10]
+	mi := &file_dns_nico_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -689,7 +757,7 @@ func (x *GetAllRecordsForDomainResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAllRecordsForDomainResponse.ProtoReflect.Descriptor instead.
 func (*GetAllRecordsForDomainResponse) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{10}
+	return file_dns_nico_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *GetAllRecordsForDomainResponse) GetResult() []*DnsResourceRecord {
@@ -713,7 +781,7 @@ type DomainInfo struct {
 
 func (x *DomainInfo) Reset() {
 	*x = DomainInfo{}
-	mi := &file_dns_nico_proto_msgTypes[11]
+	mi := &file_dns_nico_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -725,7 +793,7 @@ func (x *DomainInfo) String() string {
 func (*DomainInfo) ProtoMessage() {}
 
 func (x *DomainInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[11]
+	mi := &file_dns_nico_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -738,7 +806,7 @@ func (x *DomainInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DomainInfo.ProtoReflect.Descriptor instead.
 func (*DomainInfo) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{11}
+	return file_dns_nico_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *DomainInfo) GetId() *DomainId {
@@ -806,7 +874,7 @@ type Domain struct {
 
 func (x *Domain) Reset() {
 	*x = Domain{}
-	mi := &file_dns_nico_proto_msgTypes[12]
+	mi := &file_dns_nico_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -818,7 +886,7 @@ func (x *Domain) String() string {
 func (*Domain) ProtoMessage() {}
 
 func (x *Domain) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[12]
+	mi := &file_dns_nico_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -831,7 +899,7 @@ func (x *Domain) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Domain.ProtoReflect.Descriptor instead.
 func (*Domain) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{12}
+	return file_dns_nico_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Domain) GetId() *DomainId {
@@ -922,7 +990,7 @@ type CreateDomainRequest struct {
 
 func (x *CreateDomainRequest) Reset() {
 	*x = CreateDomainRequest{}
-	mi := &file_dns_nico_proto_msgTypes[13]
+	mi := &file_dns_nico_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -934,7 +1002,7 @@ func (x *CreateDomainRequest) String() string {
 func (*CreateDomainRequest) ProtoMessage() {}
 
 func (x *CreateDomainRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[13]
+	mi := &file_dns_nico_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -947,7 +1015,7 @@ func (x *CreateDomainRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateDomainRequest.ProtoReflect.Descriptor instead.
 func (*CreateDomainRequest) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{13}
+	return file_dns_nico_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *CreateDomainRequest) GetName() string {
@@ -985,7 +1053,7 @@ type UpdateDomainRequest struct {
 
 func (x *UpdateDomainRequest) Reset() {
 	*x = UpdateDomainRequest{}
-	mi := &file_dns_nico_proto_msgTypes[14]
+	mi := &file_dns_nico_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -997,7 +1065,7 @@ func (x *UpdateDomainRequest) String() string {
 func (*UpdateDomainRequest) ProtoMessage() {}
 
 func (x *UpdateDomainRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[14]
+	mi := &file_dns_nico_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1010,7 +1078,7 @@ func (x *UpdateDomainRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateDomainRequest.ProtoReflect.Descriptor instead.
 func (*UpdateDomainRequest) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{14}
+	return file_dns_nico_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *UpdateDomainRequest) GetDomain() *Domain {
@@ -1030,7 +1098,7 @@ type DomainSearchQuery struct {
 
 func (x *DomainSearchQuery) Reset() {
 	*x = DomainSearchQuery{}
-	mi := &file_dns_nico_proto_msgTypes[15]
+	mi := &file_dns_nico_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1042,7 +1110,7 @@ func (x *DomainSearchQuery) String() string {
 func (*DomainSearchQuery) ProtoMessage() {}
 
 func (x *DomainSearchQuery) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[15]
+	mi := &file_dns_nico_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1055,7 +1123,7 @@ func (x *DomainSearchQuery) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DomainSearchQuery.ProtoReflect.Descriptor instead.
 func (*DomainSearchQuery) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{15}
+	return file_dns_nico_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *DomainSearchQuery) GetId() *DomainId {
@@ -1081,7 +1149,7 @@ type DomainDeletionRequest struct {
 
 func (x *DomainDeletionRequest) Reset() {
 	*x = DomainDeletionRequest{}
-	mi := &file_dns_nico_proto_msgTypes[16]
+	mi := &file_dns_nico_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1093,7 +1161,7 @@ func (x *DomainDeletionRequest) String() string {
 func (*DomainDeletionRequest) ProtoMessage() {}
 
 func (x *DomainDeletionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[16]
+	mi := &file_dns_nico_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1106,7 +1174,7 @@ func (x *DomainDeletionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DomainDeletionRequest.ProtoReflect.Descriptor instead.
 func (*DomainDeletionRequest) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{16}
+	return file_dns_nico_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *DomainDeletionRequest) GetId() *DomainId {
@@ -1124,7 +1192,7 @@ type DomainDeletionResult struct {
 
 func (x *DomainDeletionResult) Reset() {
 	*x = DomainDeletionResult{}
-	mi := &file_dns_nico_proto_msgTypes[17]
+	mi := &file_dns_nico_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1136,7 +1204,7 @@ func (x *DomainDeletionResult) String() string {
 func (*DomainDeletionResult) ProtoMessage() {}
 
 func (x *DomainDeletionResult) ProtoReflect() protoreflect.Message {
-	mi := &file_dns_nico_proto_msgTypes[17]
+	mi := &file_dns_nico_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1149,14 +1217,18 @@ func (x *DomainDeletionResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DomainDeletionResult.ProtoReflect.Descriptor instead.
 func (*DomainDeletionResult) Descriptor() ([]byte, []int) {
-	return file_dns_nico_proto_rawDescGZIP(), []int{17}
+	return file_dns_nico_proto_rawDescGZIP(), []int{18}
 }
 
 var File_dns_nico_proto protoreflect.FileDescriptor
 
 const file_dns_nico_proto_rawDesc = "" +
 	"\n" +
-	"\x0edns_nico.proto\x12\x03dns\x1a\x11common_nico.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe8\x01\n" +
+	"\x0edns_nico.proto\x12\x03dns\x1a\x11common_nico.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa1\x01\n" +
+	"\fDpuDnsConfig\x123\n" +
+	"\x15authoritative_servers\x18\x01 \x03(\tR\x14authoritativeServers\x12+\n" +
+	"\x11recursive_servers\x18\x02 \x03(\tR\x10recursiveServers\x12/\n" +
+	"\x13authoritative_zones\x18\x03 \x03(\tR\x12authoritativeZones\"\xe8\x01\n" +
 	"\x1eDnsResourceRecordLookupRequest\x12\x14\n" +
 	"\x05qtype\x18\x01 \x01(\tR\x05qtype\x12\x14\n" +
 	"\x05qname\x18\x02 \x01(\tR\x05qname\x12\x17\n" +
@@ -1264,50 +1336,51 @@ func file_dns_nico_proto_rawDescGZIP() []byte {
 }
 
 var file_dns_nico_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_dns_nico_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_dns_nico_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_dns_nico_proto_goTypes = []any{
 	(DnsLookupOutcome)(0),                   // 0: dns.DnsLookupOutcome
-	(*DnsResourceRecordLookupRequest)(nil),  // 1: dns.DnsResourceRecordLookupRequest
-	(*DnsResourceRecordLookupResponse)(nil), // 2: dns.DnsResourceRecordLookupResponse
-	(*DnsResourceRecord)(nil),               // 3: dns.DnsResourceRecord
-	(*DomainMetadata)(nil),                  // 4: dns.DomainMetadata
-	(*DomainMetadataRequest)(nil),           // 5: dns.DomainMetadataRequest
-	(*DomainMetadataResponse)(nil),          // 6: dns.DomainMetadataResponse
-	(*DomainList)(nil),                      // 7: dns.DomainList
-	(*GetAllDomainsRequest)(nil),            // 8: dns.GetAllDomainsRequest
-	(*GetAllDomainsResponse)(nil),           // 9: dns.GetAllDomainsResponse
-	(*GetAllRecordsForDomainRequest)(nil),   // 10: dns.GetAllRecordsForDomainRequest
-	(*GetAllRecordsForDomainResponse)(nil),  // 11: dns.GetAllRecordsForDomainResponse
-	(*DomainInfo)(nil),                      // 12: dns.DomainInfo
-	(*Domain)(nil),                          // 13: dns.Domain
-	(*CreateDomainRequest)(nil),             // 14: dns.CreateDomainRequest
-	(*UpdateDomainRequest)(nil),             // 15: dns.UpdateDomainRequest
-	(*DomainSearchQuery)(nil),               // 16: dns.DomainSearchQuery
-	(*DomainDeletionRequest)(nil),           // 17: dns.DomainDeletionRequest
-	(*DomainDeletionResult)(nil),            // 18: dns.DomainDeletionResult
-	(*DomainId)(nil),                        // 19: common.DomainId
-	(*timestamppb.Timestamp)(nil),           // 20: google.protobuf.Timestamp
-	(*VpcId)(nil),                           // 21: common.VpcId
+	(*DpuDnsConfig)(nil),                    // 1: dns.DpuDnsConfig
+	(*DnsResourceRecordLookupRequest)(nil),  // 2: dns.DnsResourceRecordLookupRequest
+	(*DnsResourceRecordLookupResponse)(nil), // 3: dns.DnsResourceRecordLookupResponse
+	(*DnsResourceRecord)(nil),               // 4: dns.DnsResourceRecord
+	(*DomainMetadata)(nil),                  // 5: dns.DomainMetadata
+	(*DomainMetadataRequest)(nil),           // 6: dns.DomainMetadataRequest
+	(*DomainMetadataResponse)(nil),          // 7: dns.DomainMetadataResponse
+	(*DomainList)(nil),                      // 8: dns.DomainList
+	(*GetAllDomainsRequest)(nil),            // 9: dns.GetAllDomainsRequest
+	(*GetAllDomainsResponse)(nil),           // 10: dns.GetAllDomainsResponse
+	(*GetAllRecordsForDomainRequest)(nil),   // 11: dns.GetAllRecordsForDomainRequest
+	(*GetAllRecordsForDomainResponse)(nil),  // 12: dns.GetAllRecordsForDomainResponse
+	(*DomainInfo)(nil),                      // 13: dns.DomainInfo
+	(*Domain)(nil),                          // 14: dns.Domain
+	(*CreateDomainRequest)(nil),             // 15: dns.CreateDomainRequest
+	(*UpdateDomainRequest)(nil),             // 16: dns.UpdateDomainRequest
+	(*DomainSearchQuery)(nil),               // 17: dns.DomainSearchQuery
+	(*DomainDeletionRequest)(nil),           // 18: dns.DomainDeletionRequest
+	(*DomainDeletionResult)(nil),            // 19: dns.DomainDeletionResult
+	(*DomainId)(nil),                        // 20: common.DomainId
+	(*timestamppb.Timestamp)(nil),           // 21: google.protobuf.Timestamp
+	(*VpcId)(nil),                           // 22: common.VpcId
 }
 var file_dns_nico_proto_depIdxs = []int32{
-	3,  // 0: dns.DnsResourceRecordLookupResponse.records:type_name -> dns.DnsResourceRecord
+	4,  // 0: dns.DnsResourceRecordLookupResponse.records:type_name -> dns.DnsResourceRecord
 	0,  // 1: dns.DnsResourceRecordLookupResponse.outcome:type_name -> dns.DnsLookupOutcome
-	3,  // 2: dns.DnsResourceRecordLookupResponse.authority_soa:type_name -> dns.DnsResourceRecord
-	4,  // 3: dns.DomainMetadataResponse.result:type_name -> dns.DomainMetadata
-	13, // 4: dns.DomainList.domains:type_name -> dns.Domain
-	12, // 5: dns.GetAllDomainsResponse.result:type_name -> dns.DomainInfo
-	3,  // 6: dns.GetAllRecordsForDomainResponse.result:type_name -> dns.DnsResourceRecord
-	19, // 7: dns.DomainInfo.id:type_name -> common.DomainId
-	19, // 8: dns.Domain.id:type_name -> common.DomainId
-	20, // 9: dns.Domain.created:type_name -> google.protobuf.Timestamp
-	20, // 10: dns.Domain.updated:type_name -> google.protobuf.Timestamp
-	20, // 11: dns.Domain.deleted:type_name -> google.protobuf.Timestamp
-	4,  // 12: dns.Domain.metadata:type_name -> dns.DomainMetadata
-	21, // 13: dns.Domain.vpc_id:type_name -> common.VpcId
-	21, // 14: dns.CreateDomainRequest.vpc_id:type_name -> common.VpcId
-	13, // 15: dns.UpdateDomainRequest.domain:type_name -> dns.Domain
-	19, // 16: dns.DomainSearchQuery.id:type_name -> common.DomainId
-	19, // 17: dns.DomainDeletionRequest.id:type_name -> common.DomainId
+	4,  // 2: dns.DnsResourceRecordLookupResponse.authority_soa:type_name -> dns.DnsResourceRecord
+	5,  // 3: dns.DomainMetadataResponse.result:type_name -> dns.DomainMetadata
+	14, // 4: dns.DomainList.domains:type_name -> dns.Domain
+	13, // 5: dns.GetAllDomainsResponse.result:type_name -> dns.DomainInfo
+	4,  // 6: dns.GetAllRecordsForDomainResponse.result:type_name -> dns.DnsResourceRecord
+	20, // 7: dns.DomainInfo.id:type_name -> common.DomainId
+	20, // 8: dns.Domain.id:type_name -> common.DomainId
+	21, // 9: dns.Domain.created:type_name -> google.protobuf.Timestamp
+	21, // 10: dns.Domain.updated:type_name -> google.protobuf.Timestamp
+	21, // 11: dns.Domain.deleted:type_name -> google.protobuf.Timestamp
+	5,  // 12: dns.Domain.metadata:type_name -> dns.DomainMetadata
+	22, // 13: dns.Domain.vpc_id:type_name -> common.VpcId
+	22, // 14: dns.CreateDomainRequest.vpc_id:type_name -> common.VpcId
+	14, // 15: dns.UpdateDomainRequest.domain:type_name -> dns.Domain
+	20, // 16: dns.DomainSearchQuery.id:type_name -> common.DomainId
+	20, // 17: dns.DomainDeletionRequest.id:type_name -> common.DomainId
 	18, // [18:18] is the sub-list for method output_type
 	18, // [18:18] is the sub-list for method input_type
 	18, // [18:18] is the sub-list for extension type_name
@@ -1321,20 +1394,20 @@ func file_dns_nico_proto_init() {
 		return
 	}
 	file_common_nico_proto_init()
-	file_dns_nico_proto_msgTypes[0].OneofWrappers = []any{}
 	file_dns_nico_proto_msgTypes[1].OneofWrappers = []any{}
 	file_dns_nico_proto_msgTypes[2].OneofWrappers = []any{}
-	file_dns_nico_proto_msgTypes[11].OneofWrappers = []any{}
+	file_dns_nico_proto_msgTypes[3].OneofWrappers = []any{}
 	file_dns_nico_proto_msgTypes[12].OneofWrappers = []any{}
 	file_dns_nico_proto_msgTypes[13].OneofWrappers = []any{}
-	file_dns_nico_proto_msgTypes[15].OneofWrappers = []any{}
+	file_dns_nico_proto_msgTypes[14].OneofWrappers = []any{}
+	file_dns_nico_proto_msgTypes[16].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_dns_nico_proto_rawDesc), len(file_dns_nico_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   18,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
