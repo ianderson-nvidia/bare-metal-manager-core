@@ -192,6 +192,7 @@ linux-build = ["tss-esapi"]
 test-support = [
   "dep:carbide-test-support",
   "carbide-api-model/test-support",
+  "carbide-dpf/test-support",
   "carbide-ib-fabric/test-support",
   "carbide-machine-controller/test-support",
   "carbide-nvlink-manager/test-support",

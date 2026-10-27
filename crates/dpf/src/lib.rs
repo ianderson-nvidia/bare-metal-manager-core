@@ -72,8 +72,11 @@ mod test;
 
 // Re-exports for convenience
 pub use error::DpfError;
+pub use k8s_openapi::apimachinery::pkg::apis::meta::v1::{ObjectMeta, OwnerReference};
 pub use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 pub use repository::{DpfRepository, KubeRepository};
+#[cfg(feature = "test-support")]
+pub use sdk::test_support::dpu_service_observation;
 pub use sdk::{
     DpfSdk, DpfSdkBuilder, DpuProvisioningSource, NoLabels, ResourceLabeler, build_deployment,
     build_deployment_dpu_interfaces, build_effective_dpu_interfaces, build_service_configuration,

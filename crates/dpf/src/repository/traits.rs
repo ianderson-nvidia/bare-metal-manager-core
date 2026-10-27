@@ -230,7 +230,12 @@ pub trait DpuServiceConfigurationRepository: Send + Sync {
 #[async_trait]
 pub trait DpuServiceRepository: Send + Sync {
     async fn get(&self, name: &str, namespace: &str) -> Result<Option<DPUService>, DpfError>;
-    async fn list(&self, namespace: &str) -> Result<Vec<DPUService>, DpfError>;
+    /// Lists services in the namespace, applying the optional Kubernetes label selector server-side.
+    async fn list(
+        &self,
+        namespace: &str,
+        label_selector: Option<&str>,
+    ) -> Result<Vec<DPUService>, DpfError>;
     async fn create(&self, service: &DPUService) -> Result<DPUService, DpfError>;
     /// Implementations must atomically apply the RFC 6902 patch and return the resulting
     /// DPUService.

@@ -19,6 +19,8 @@ required-features = ["driver"]
 [features]
 default = []
 driver = ["dep:clap", "dep:tracing-subscriber", "dep:libredfish"]
+# Test fixtures built on the production CR conversions.
+test-support = []
 
 [dependencies]
 hex = { workspace = true }

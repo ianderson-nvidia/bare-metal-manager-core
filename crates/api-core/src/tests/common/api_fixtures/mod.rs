@@ -1602,6 +1602,7 @@ async fn create_test_env_with_overrides_inner(
                 )
                 .power_options_config(power_options)
                 .dpf_sdk(overrides.dpf_sdk)
+                .unbound_config(crate::dpf_services::unbound_config(&config.dpf).unwrap())
                 .build(),
         )),
     };

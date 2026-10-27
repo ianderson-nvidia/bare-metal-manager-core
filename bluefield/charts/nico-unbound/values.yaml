@@ -1,0 +1,26 @@
+### DPF contract ###
+serviceDaemonSet:
+  resources:
+    cpu: 100m
+    memory: 64Mi
+
+# Complete native Unbound configuration; required, with no listener or upstream defaults.
+# Mounted read-only at /etc/unbound/unbound.conf. Rolling updates restart pods
+# when configuration changes, clearing their caches.
+# For the default security context, disable user switching and chroot
+# (username/chroot: "").
+unboundConfig: ""
+
+image:
+  repository: ""
+  pullPolicy: IfNotPresent
+  # Empty uses the chart appVersion.
+  tag: ""
+imagePullSecrets: []
+securityContext:
+  runAsUser: 0
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+    add: [NET_BIND_SERVICE]

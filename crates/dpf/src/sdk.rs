@@ -3091,6 +3091,18 @@ impl<R: DpuServiceChainRepository, L> DpfSdk<R, L> {
 }
 
 impl<R: DpuServiceRepository, L> DpfSdk<R, L> {
+    /// Lists DPUService observations in this SDK's namespace using an optional server-side label selector.
+    pub async fn list_dpu_services(
+        &self,
+        label_selector: Option<&str>,
+    ) -> Result<Vec<DpuServiceObservation>, DpfError> {
+        DpuServiceRepository::list(&*self.repo, &self.namespace, label_selector)
+            .await?
+            .into_iter()
+            .map(dpu_service_from_resource)
+            .collect()
+    }
+
     /// Get any observed DPUService from this SDK's namespace.
     pub async fn get_dpu_service(
         &self,
@@ -3152,6 +3164,8 @@ fn dpu_service_to_resource(service: &DetachedDpuServiceDefinition) -> DPUService
             name: Some(service.name.clone()),
             namespace: Some(service.namespace.clone()),
             labels: (!service.labels.is_empty()).then(|| service.labels.clone()),
+            owner_references: (!service.owner_references.is_empty())
+                .then(|| service.owner_references.clone()),
             ..Default::default()
         },
         spec: DpuServiceSpec {
@@ -3205,6 +3219,22 @@ fn dpu_service_to_resource(service: &DetachedDpuServiceDefinition) -> DPUService
     }
 }
 
+#[cfg(feature = "test-support")]
+pub mod test_support {
+    use super::*;
+
+    /// The observation the SDK returns for a freshly created definition, with apiserver identity.
+    pub fn dpu_service_observation(
+        service: &DetachedDpuServiceDefinition,
+    ) -> DpuServiceObservation {
+        let mut observed = dpu_service_from_resource(dpu_service_to_resource(service))
+            .expect("detached definitions convert to observations");
+        observed.uid = Some(format!("uid-{}", service.name));
+        observed.resource_version = Some("1".to_string());
+        observed
+    }
+}
+
 /// Converts a generated DPF DPUService into DpuServiceObservation so controllers never depend on
 /// generated CR types.
 fn dpu_service_from_resource(service: DPUService) -> Result<DpuServiceObservation, DpfError> {
@@ -3234,6 +3264,7 @@ fn dpu_service_from_resource(service: DPUService) -> Result<DpuServiceObservatio
         name: service.metadata.name,
         namespace: service.metadata.namespace,
         labels: service.metadata.labels.unwrap_or_default(),
+        owner_references: service.metadata.owner_references.unwrap_or_default(),
         helm_chart: DpuServiceHelmChartObservation {
             repo_url: service.spec.helm_chart.source.repo_url,
             chart: service.spec.helm_chart.source.chart,
@@ -3284,6 +3315,20 @@ fn detached_node_selector(
 }
 
 impl<R: DpuDeviceRepository, L: ResourceLabeler> DpfSdk<R, L> {
+    /// Returns full metadata for a DPUDevice in this SDK's namespace, or `None` when absent.
+    /// Accepts the raw device ID; the SDK adds the `device-` CR prefix.
+    pub async fn get_dpu_device_metadata(
+        &self,
+        dpu_device_name: &str,
+    ) -> Result<Option<ObjectMeta>, DpfError> {
+        let cr_name = dpu_device_cr_name(dpu_device_name);
+        Ok(
+            DpuDeviceRepository::get(&*self.repo, &cr_name, &self.namespace)
+                .await?
+                .map(|device| device.metadata),
+        )
+    }
+
     /// Merge changes into a DPUDevice's DPU-cluster node labels.
     ///
     /// `dpu_device_name` is the raw device ID (without the `device-` CR
@@ -6426,13 +6471,20 @@ mod tests {
                 .cloned())
         }
 
-        async fn list(&self, ns: &str) -> Result<Vec<DPUService>, DpfError> {
+        async fn list(
+            &self,
+            ns: &str,
+            label_selector: Option<&str>,
+        ) -> Result<Vec<DPUService>, DpfError> {
             Ok(self
                 .services
                 .read()
                 .unwrap()
                 .iter()
-                .filter(|(key, _)| key.starts_with(&format!("{ns}/")))
+                .filter(|(key, service)| {
+                    key.starts_with(&format!("{ns}/"))
+                        && Self::matches_selector(*service, label_selector)
+                })
                 .map(|(_, service)| service.clone())
                 .collect())
         }
@@ -8345,6 +8397,8 @@ mod tests {
             metadata: ObjectMeta {
                 name: Some(device_name.clone()),
                 namespace: Some(TEST_NAMESPACE.to_string()),
+                uid: Some("device-uid".to_string()),
+                resource_version: Some("17".to_string()),
                 ..Default::default()
             },
             spec: DpuDeviceSpec {
@@ -8373,6 +8427,16 @@ mod tests {
             status: None,
         };
         DpuDeviceRepository::create(&mock, &device).await.unwrap();
+        assert_eq!(
+            sdk.get_dpu_device_metadata("dpu-001").await.unwrap(),
+            Some(device.metadata.clone())
+        );
+        assert!(
+            sdk.get_dpu_device_metadata("missing")
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         sdk.merge_dpu_device_node_labels(
             "dpu-001",
@@ -8820,6 +8884,7 @@ mod tests {
             name: name.to_owned(),
             namespace: "another-namespace".to_owned(),
             labels: BTreeMap::from([("nico/extension-service-id".to_owned(), "id".to_owned())]),
+            owner_references: Vec::new(),
             helm_chart: DetachedHelmChart {
                 repo_url: "oci://registry.example.com/extensions".to_owned(),
                 chart: "extension".to_owned(),
@@ -8953,10 +9018,19 @@ mod tests {
             .build_without_resources()
             .await
             .unwrap();
-        let service = test_dpu_service("extension-service");
+        let mut service = test_dpu_service("extension-service");
+        service.owner_references = vec![crate::OwnerReference {
+            api_version: "provisioning.dpu.nvidia.com/v1alpha1".to_string(),
+            kind: "DPUDevice".to_string(),
+            name: "device-dpu-001".to_string(),
+            uid: "device-uid".to_string(),
+            controller: Some(false),
+            block_owner_deletion: Some(false),
+        }];
 
         // Creation rewrites the caller's namespace and retains every detached contract field.
         let created = sdk.create_dpu_service(&service).await.unwrap();
+        assert_eq!(created.owner_references, service.owner_references);
         assert_eq!(created.name.as_deref(), Some("extension-service"));
         assert_eq!(created.namespace.as_deref(), Some(TEST_NAMESPACE));
         assert_eq!(created.uid.as_deref(), Some("created-service-uid"));
@@ -8974,6 +9048,14 @@ mod tests {
                 "apiVersion": "svc.dpu.nvidia.com/v1alpha1",
                 "kind": "DPUService",
                 "metadata": {
+                    "ownerReferences": [{
+                        "apiVersion": "provisioning.dpu.nvidia.com/v1alpha1",
+                        "kind": "DPUDevice",
+                        "name": "device-dpu-001",
+                        "uid": "device-uid",
+                        "controller": false,
+                        "blockOwnerDeletion": false,
+                    }],
                     "labels": {"nico/extension-service-id": "id"},
                     "name": "extension-service",
                     "namespace": TEST_NAMESPACE,
@@ -9014,6 +9096,7 @@ mod tests {
             .await
             .unwrap()
             .expect("created service can be observed");
+        assert_eq!(observed.owner_references, service.owner_references);
         assert_eq!(observed.uid.as_deref(), Some("created-service-uid"));
         assert_eq!(observed.resource_version.as_deref(), Some("1"));
         assert!(!observed.is_deleting);
@@ -9077,6 +9160,28 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn dpu_service_list_delegates_selector() {
+        let mock = SdkMock::new();
+        let sdk = DpfSdkBuilder::new(mock, TEST_NAMESPACE, String::new())
+            .build_without_resources()
+            .await
+            .unwrap();
+        sdk.create_dpu_service(&test_dpu_service("matching"))
+            .await
+            .unwrap();
+        let mut unrelated = test_dpu_service("unrelated");
+        unrelated.labels.clear();
+        sdk.create_dpu_service(&unrelated).await.unwrap();
+        let matching = sdk
+            .list_dpu_services(Some("nico/extension-service-id=id"))
+            .await
+            .unwrap();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].name.as_deref(), Some("matching"));
+        assert_eq!(sdk.list_dpu_services(None).await.unwrap().len(), 2);
     }
 
     fn terminating_timestamp() -> k8s_openapi::apimachinery::pkg::apis::meta::v1::Time {

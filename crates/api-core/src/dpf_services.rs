@@ -268,6 +268,80 @@ pub(crate) fn default_fmds_service() -> DpfServiceConfig {
     }
 }
 
+pub(crate) fn default_unbound_service() -> DpfServiceConfig {
+    DpfServiceConfig {
+        name: "unbound".into(),
+        helm_repo_url: DEFAULT_CARBIDE_HELM_REGISTRY.into(),
+        helm_chart: "nico-unbound".into(),
+        helm_version: COMPILE_TIME_HELM_VERSION.into(),
+        docker_repo_url: format!("{DEFAULT_CARBIDE_IMAGE_REGISTRY}/nico-unbound"),
+        docker_image_tag: COMPILE_TIME_IMAGE_TAG.into(),
+        docker_image_pull_secret: None,
+        extra_helm_values: None,
+    }
+}
+
+/// Validates opt-in placement and projects chart values at startup.
+pub(crate) fn unbound_config(
+    dpf: &crate::cfg::file::DpfConfig,
+) -> eyre::Result<Option<carbide_machine_controller::UnboundServiceConfig>> {
+    use carbide_machine_controller::UnboundServiceConfig;
+
+    let Some(config) = &dpf.unbound else {
+        return Ok(None);
+    };
+    eyre::ensure!(dpf.enabled, "dpf.unbound requires dpf.enabled=true");
+    if !config.enabled {
+        return Ok(Some(UnboundServiceConfig::Disabled));
+    }
+
+    let mut service = config.service.clone();
+    if service.docker_image_pull_secret.is_none() {
+        service.docker_image_pull_secret = dpf.docker_image_pull_secret.clone();
+    }
+    for (field, value) in [
+        ("helm_repo_url", &service.helm_repo_url),
+        ("helm_chart", &service.helm_chart),
+        ("helm_version", &service.helm_version),
+    ] {
+        eyre::ensure!(
+            !value.trim().is_empty(),
+            "dpf.unbound.service.{field} must be set"
+        );
+    }
+    eyre::ensure!(
+        service.name == "unbound",
+        "dpf.unbound.service.name is reserved as unbound"
+    );
+
+    let mut values = serde_json::json!({
+        "image": {
+            "repository": service.docker_repo_url,
+            "tag": service.docker_image_tag,
+        },
+    });
+    apply_helm_values(&mut values, &service);
+    // The chart schema rejects a blank unboundConfig or image at render time.
+    if let Some(daemonset) = values.get("serviceDaemonSet") {
+        let daemonset = daemonset.as_object().ok_or_else(|| {
+            eyre::eyre!("dpf.unbound Helm value serviceDaemonSet must be an object")
+        })?;
+        eyre::ensure!(
+            !daemonset.contains_key("nodeSelector"),
+            "dpf.unbound node placement is owned by Core; omit serviceDaemonSet.nodeSelector"
+        );
+    }
+    Ok(Some(UnboundServiceConfig::Enabled(
+        carbide_dpf::DetachedHelmChart {
+            repo_url: service.helm_repo_url,
+            chart: service.helm_chart,
+            version: service.helm_version,
+            release_name: String::new(),
+            values: Some(serde_json::from_value(values).expect("generated values are an object")),
+        },
+    )))
+}
+
 pub(crate) fn default_otelcol_service() -> DpfServiceConfig {
     DpfServiceConfig {
         name: OTEL_COLLECTOR_SERVICE_NAME.to_string(),
@@ -919,6 +993,88 @@ pub(crate) fn mandatory_services(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn unbound_requires_explicit_management_and_keeps_drain_independent_of_chart_values() {
+        use carbide_machine_controller::UnboundServiceConfig;
+
+        use crate::cfg::file::DpfConfig;
+
+        let unmanaged: DpfConfig = toml::from_str("").unwrap();
+        assert!(unbound_config(&unmanaged).unwrap().is_none());
+
+        let drain: DpfConfig =
+            toml::from_str("enabled = true\n[unbound]\nenabled = false").unwrap();
+        assert!(matches!(
+            unbound_config(&drain).unwrap(),
+            Some(UnboundServiceConfig::Disabled)
+        ));
+
+        let without_dpf: DpfConfig = toml::from_str("[unbound]\nenabled = false").unwrap();
+        assert!(unbound_config(&without_dpf).is_err());
+    }
+
+    #[test]
+    fn unbound_projects_native_configuration_and_validates_merged_values() {
+        use carbide_machine_controller::UnboundServiceConfig;
+
+        use crate::cfg::file::DpfConfig;
+
+        let config: DpfConfig = toml::from_str(
+            r#"
+enabled = true
+[unbound]
+enabled = true
+[unbound.service]
+helm_version = "1.2.3"
+docker_image_tag = "test-image"
+docker_image_pull_secret = "registry"
+[unbound.service.extra_helm_values]
+unboundConfig = "server:\n  interface: 127.0.0.1\n"
+[unbound.service.extra_helm_values.serviceDaemonSet.resources]
+memory = "128Mi"
+[unbound.service.extra_helm_values.image]
+pullPolicy = "Always"
+"#,
+        )
+        .unwrap();
+        let Some(UnboundServiceConfig::Enabled(chart)) = unbound_config(&config).unwrap() else {
+            panic!("explicit enablement must project a chart");
+        };
+        assert_eq!(chart.chart, "nico-unbound");
+        assert_eq!(chart.version, "1.2.3");
+        let values = chart.values.unwrap();
+        assert_eq!(values["image"]["tag"], "test-image");
+        assert_eq!(values["image"]["pullPolicy"], "Always");
+        assert_eq!(values["imagePullSecrets"][0]["name"], "registry");
+        assert_eq!(values["unboundConfig"], "server:\n  interface: 127.0.0.1\n");
+        assert_eq!(values["serviceDaemonSet"]["resources"]["memory"], "128Mi");
+
+        let cases = [
+            (
+                "placement override",
+                serde_json::json!({"serviceDaemonSet": {"nodeSelector": {}}}),
+            ),
+            (
+                "invalid daemonset overlay",
+                serde_json::json!({"serviceDaemonSet": false}),
+            ),
+        ];
+        for (name, overlay) in cases {
+            let mut invalid = config.clone();
+            let values = invalid
+                .unbound
+                .as_mut()
+                .unwrap()
+                .service
+                .extra_helm_values
+                .as_mut()
+                .unwrap();
+            merge_helm_values(values, overlay.as_object().unwrap());
+            assert!(unbound_config(&invalid).is_err(), "{name}");
+        }
+    }
+
     use carbide_dpf::sdk::{build_dpu_interfaces_vec, build_effective_dpu_interfaces};
     use carbide_dpf::types::{
         DpfInterceptBridge, DpfInterceptBridging, DpfInterfaceIdentity, DpuDeploymentType,

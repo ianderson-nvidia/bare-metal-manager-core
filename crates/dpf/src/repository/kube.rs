@@ -564,9 +564,17 @@ impl DpuServiceRepository for KubeRepository {
         Ok(api.get_opt(name).await?)
     }
 
-    async fn list(&self, namespace: &str) -> Result<Vec<DPUService>, DpfError> {
+    async fn list(
+        &self,
+        namespace: &str,
+        label_selector: Option<&str>,
+    ) -> Result<Vec<DPUService>, DpfError> {
         let api = self.api(namespace);
-        let list = api.list(&ListParams::default()).await?;
+        let params = match label_selector {
+            Some(selector) => ListParams::default().labels(selector),
+            None => ListParams::default(),
+        };
+        let list = api.list(&params).await?;
         Ok(list.items)
     }
 
@@ -1133,6 +1141,44 @@ mod tests {
             updated.unwrap().metadata.resource_version.as_deref(),
             Some("18")
         );
+    }
+
+    #[tokio::test]
+    async fn dpu_service_list_uses_server_side_selector() {
+        let (service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let repository = KubeRepository::with_client(Client::new(service, "default"));
+        let list = DpuServiceRepository::list(&repository, "test-ns", Some("owner=id"));
+        let inspect_list = async {
+            let (request, send_response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), Method::GET);
+            assert_eq!(
+                request.uri().path(),
+                "/apis/svc.dpu.nvidia.com/v1alpha1/namespaces/test-ns/dpuservices"
+            );
+            assert_eq!(request.uri().query(), Some("&labelSelector=owner%3Did"));
+            send_response.send_response(
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "apiVersion": "svc.dpu.nvidia.com/v1alpha1",
+                            "kind": "DPUServiceList",
+                            "metadata": {},
+                            "items": [],
+                        })
+                        .to_string()
+                        .into_bytes(),
+                    ))
+                    .unwrap(),
+            );
+        };
+        let (listed, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(list, inspect_list)
+        })
+        .await
+        .expect("DPUService list response must complete");
+        assert!(listed.unwrap().is_empty());
     }
 
     /// Verifies interface LIST, POST, PATCH, and conditional DELETE requests sent through

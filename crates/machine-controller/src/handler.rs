@@ -285,6 +285,7 @@ pub struct MachineStateHandler {
     host_upgrade: Arc<HostUpgradeState>,
     power_options_config: PowerOptionConfig,
     enable_secure_boot: bool,
+    unbound_config: Option<crate::UnboundServiceConfig>,
 }
 
 pub struct MachineStateHandlerBuilder {
@@ -307,6 +308,7 @@ pub struct MachineStateHandlerBuilder {
     enable_secure_boot: bool,
     hgx_bmc_gpu_reboot_delay: chrono::Duration,
     dpf_sdk: Option<Arc<dyn DpfOperations>>,
+    unbound_config: Option<crate::UnboundServiceConfig>,
 }
 
 impl MachineStateHandlerBuilder {
@@ -345,7 +347,14 @@ impl MachineStateHandlerBuilder {
             enable_secure_boot: false,
             hgx_bmc_gpu_reboot_delay: chrono::Duration::seconds(30),
             dpf_sdk: None,
+            unbound_config: None,
         }
+    }
+
+    /// Configure automatic Unbound workloads; absence leaves existing workloads unmanaged.
+    pub fn unbound_config(mut self, config: Option<crate::UnboundServiceConfig>) -> Self {
+        self.unbound_config = config;
+        self
     }
 
     pub fn dpf_sdk(mut self, dpf_sdk: Option<Arc<dyn DpfOperations>>) -> Self {
@@ -531,6 +540,7 @@ impl MachineStateHandler {
             host_upgrade,
             power_options_config: builder.power_options_config,
             enable_secure_boot: builder.enable_secure_boot,
+            unbound_config: builder.unbound_config,
         }
     }
 
@@ -3223,6 +3233,17 @@ impl StateHandler for MachineStateHandler {
         // returns, preserving their long-standing exclusions.)
         if let Some(per_object_info) = &ctx.services.per_object_info {
             per_object_info.record(mh_snapshot);
+        }
+
+        if let Some(config) = &self.unbound_config {
+            let sdk = self.dpu_handler.dpf_sdk.as_deref().ok_or_else(|| {
+                StateHandlerError::GenericError(eyre!("unbound management requires the DPF SDK"))
+            })?;
+            if !crate::unbound::reconcile(mh_snapshot, config, sdk, &ctx.services.db_pool).await? {
+                return Ok(StateHandlerOutcome::wait(
+                    "waiting for Unbound workload retirement".to_string(),
+                ));
+            }
         }
 
         if !mh_snapshot

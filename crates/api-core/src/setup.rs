@@ -2098,6 +2098,7 @@ async fn initialize_and_start_controllers<'a>(
                 .credential_reader(api_service.credential_manager.clone())
                 .power_options_config(carbide_config.power_manager_options.clone().into())
                 .dpf_sdk(dpf_sdk.clone())
+                .unbound_config(crate::dpf_services::unbound_config(&carbide_config.dpf)?)
                 .build(),
         ))
         .io(Arc::new(MachineStateControllerIO {

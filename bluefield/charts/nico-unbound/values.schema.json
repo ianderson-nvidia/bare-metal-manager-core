@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Unbound DPUService Helm chart values",
+  "type": "object",
+  "required": [
+    "unboundConfig"
+  ],
+  "properties": {
+    "unboundConfig": {
+      "type": "string",
+      "pattern": "\\S",
+      "description": "Complete native Unbound configuration; a nonblank value is required."
+    }
+  }
+}

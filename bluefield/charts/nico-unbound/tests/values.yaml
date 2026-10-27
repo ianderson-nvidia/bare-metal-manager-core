@@ -1,0 +1,23 @@
+image:
+  repository: example.invalid/nico-unbound
+unboundConfig: |
+  server:
+      interface: 0.0.0.0
+      port: 53
+      do-ip6: no
+      do-udp: yes
+      do-tcp: yes
+      access-control: 0.0.0.0/0 allow
+      username: ""
+      chroot: ""
+      directory: "/tmp"
+      pidfile: ""
+      do-daemonize: no
+      use-syslog: no
+      logfile: ""
+      module-config: "iterator"
+      msg-cache-size: 4m
+      rrset-cache-size: 8m
+      serve-expired: no
+      local-zone: "cache-test.example." static
+      local-data: "cache-test.example. 60 IN A 192.0.2.10"

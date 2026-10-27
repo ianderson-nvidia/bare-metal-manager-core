@@ -30,7 +30,7 @@ use carbide_dpf::types::{
 use carbide_dpf::{
     AstraRoutePrefixes, BmcPasswordProvider, DPU_ENABLED_NODE_LABEL, DpfError, DpfSdk,
     DpuDeploymentType, DpuDeviceInfo, DpuNodeInfo, DpuPhase, DpuWatcher, KubeRepository,
-    ResourceLabeler, node_id_from_dpu_node_cr_name,
+    ObjectMeta, ResourceLabeler, node_id_from_dpu_node_cr_name,
 };
 use carbide_uuid::machine::{DpuMachineId, HostMachineId};
 use model::dpu_machine_update::OutdatedDpfDpu;
@@ -186,6 +186,18 @@ pub trait DpfOperations: Send + Sync + std::fmt::Debug {
     /// Reports `true` for a DPU it cannot evaluate, so callers gated on "this
     /// DPU is already up to date" fail closed.
     async fn is_dpu_outdated(&self, dpu_name: &str) -> Result<bool, DpfError>;
+
+    /// Lists DPUService observations with an optional server-side Kubernetes label selector.
+    async fn list_dpu_services<'a>(
+        &self,
+        label_selector: Option<&'a str>,
+    ) -> Result<Vec<DpuServiceObservation>, DpfError>;
+
+    /// Returns full DPUDevice metadata for a raw device ID, or `None` when absent.
+    async fn get_dpu_device_metadata(
+        &self,
+        dpu_device_name: &str,
+    ) -> Result<Option<ObjectMeta>, DpfError>;
 
     /// Create a direct, detached DPUService for an extension service.
     async fn create_dpu_service(
@@ -1006,6 +1018,20 @@ impl DpfOperations for DpfSdkOps {
             });
         }
         Ok(out)
+    }
+
+    async fn list_dpu_services<'a>(
+        &self,
+        label_selector: Option<&'a str>,
+    ) -> Result<Vec<DpuServiceObservation>, DpfError> {
+        self.sdk.list_dpu_services(label_selector).await
+    }
+
+    async fn get_dpu_device_metadata(
+        &self,
+        dpu_device_name: &str,
+    ) -> Result<Option<ObjectMeta>, DpfError> {
+        self.sdk.get_dpu_device_metadata(dpu_device_name).await
     }
 
     async fn create_dpu_service(

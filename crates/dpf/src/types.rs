@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use std::net::IpAddr;
 
 use derive_builder::Builder;
-use k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition;
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, OwnerReference};
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use serde::{Deserialize, Serialize};
 
@@ -727,6 +727,8 @@ pub struct DetachedDpuServiceDefinition {
     pub name: String,
     pub namespace: String,
     pub labels: BTreeMap<String, String>,
+    /// Kubernetes owners retained exactly for dependent-resource garbage collection.
+    pub owner_references: Vec<OwnerReference>,
     pub helm_chart: DetachedHelmChart,
     pub deploy_in_cluster: Option<bool>,
     pub security: DetachedDpuServiceSecurity,
@@ -903,6 +905,8 @@ pub struct DpuServiceObservation {
     pub name: Option<String>,
     pub namespace: Option<String>,
     pub labels: BTreeMap<String, String>,
+    /// Kubernetes owners retained exactly for dependent-resource garbage collection.
+    pub owner_references: Vec<OwnerReference>,
     pub helm_chart: DpuServiceHelmChartObservation,
     pub deploy_in_cluster: Option<bool>,
     pub dpu_cluster_selector_present: bool,

@@ -28,7 +28,7 @@ path = "tests/integration/main.rs"
 
 [features]
 default = []
-test-support = ["dep:mockall"]
+test-support = ["dep:mockall", "carbide-dpf/test-support"]
 
 [dependencies]
 bmc-vendor = { path = "../bmc-vendor" }

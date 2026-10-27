@@ -43,7 +43,9 @@ pub mod per_object;
 pub mod redfish;
 pub(crate) mod rpc;
 pub(crate) mod scout_firmware_scripts;
+mod unbound;
 pub mod write_ops;
+pub use unbound::UnboundServiceConfig;
 
 /// Fields of span that should be logged for each message.
 pub fn extra_logfmt_logging_fields() -> Vec<String> {

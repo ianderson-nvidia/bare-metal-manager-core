@@ -1996,6 +1996,10 @@ pub struct DpfConfig {
     /// assigned to a deployment type by the resolver.
     #[serde(default)]
     pub extra_services: Box<DpfExtraServicesConfig>,
+    /// Optional per-VPC Unbound management. Omitted leaves workloads unmanaged;
+    /// an explicit disabled block drains owned workloads and still requires DPF.
+    #[serde(default)]
+    pub unbound: Option<DpfUnboundConfig>,
     /// Optional proxy configuration for the DPU. When set, containerd on the DPU is
     /// configured to route outbound HTTPS traffic through the specified proxy.
     #[serde(default)]
@@ -2034,6 +2038,7 @@ impl Default for DpfConfig {
             dpu_agent_bootstrap_ca: DpfDpuAgentBootstrapCa::default(),
             services: Box::default(),
             extra_services: Box::default(),
+            unbound: None,
             proxy: None,
             extra_bfcfg_parameters: Vec::new(),
             deployments: DpfDeploymentsConfig::default(),
@@ -2363,6 +2368,32 @@ pub struct DpfResolvedMandatoryServicesConfig {
     /// Deployment-type-specific extra services. Keyed by [`DpfExtraService`] in a
     /// [`BTreeMap`] so iteration order is deterministic.
     pub extra: BTreeMap<DpfExtraService, DpfServiceConfig>,
+}
+
+/// Opt-in lifecycle for one Unbound workload per VPC and DPU.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DpfUnboundConfig {
+    /// Enables placement when true; false drains owned workloads without validating the chart.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Chart/image settings and complete native extra_helm_values.unboundConfig.
+    /// Service names and node placement are owned by Core.
+    #[serde(
+        default = "crate::dpf_services::default_unbound_service",
+        deserialize_with = "deserialize_unbound_service"
+    )]
+    pub service: DpfServiceConfig,
+}
+
+fn deserialize_unbound_service<'de, D>(deserializer: D) -> Result<DpfServiceConfig, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let configured = DpfServiceConfigOverride::deserialize(deserializer)?;
+    let mut service = crate::dpf_services::default_unbound_service();
+    configured.apply_to(&mut service);
+    Ok(service)
 }
 
 /// Configuration for a single Helm-based DPF service.

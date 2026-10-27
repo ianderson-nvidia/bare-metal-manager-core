@@ -95,6 +95,7 @@ mod tenant_identity_config;
 mod tenant_prefix_startup;
 mod tenants;
 mod tpm_ca;
+mod unbound;
 mod vpc;
 mod vpc_peering;
 mod vpc_prefix;

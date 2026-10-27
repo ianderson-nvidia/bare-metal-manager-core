@@ -26,9 +26,8 @@ use ::rpc::forge::{
 };
 use carbide_dpf::{
     DetachedDpfResourceObservation, DetachedDpuServiceChainDefinition,
-    DetachedDpuServiceDefinition, DetachedDpuServiceInterfaceDefinition, DpfError,
-    DpuServiceDaemonSetObservation, DpuServiceHelmChartObservation, DpuServiceObservation,
-    ServiceVpcSlots, detached_dpu_service_chain_spec, detached_dpu_service_interface_spec,
+    DetachedDpuServiceInterfaceDefinition, DpfError, ServiceVpcSlots,
+    detached_dpu_service_chain_spec, detached_dpu_service_interface_spec, dpu_service_observation,
 };
 use carbide_extension_service_controller::dpu_service::{
     dpu_service_mutable_patch, project_dpu_service, project_service_vpc_registration,
@@ -308,79 +307,6 @@ async fn mark_dpf_service_ready_for_update(
     txn.commit().await?;
 
     Ok(())
-}
-
-/// Converts a desired DPUService into a DpuServiceObservation with apiserver identity for
-/// lifecycle-controller tests.
-/// Populating immutable fields and deletion preconditions keeps ownership and deletion checks
-/// realistic.
-fn dpu_service_observation(service: &DetachedDpuServiceDefinition) -> DpuServiceObservation {
-    DpuServiceObservation {
-        name: Some(service.name.clone()),
-        namespace: Some(service.namespace.clone()),
-        labels: service.labels.clone(),
-        helm_chart: DpuServiceHelmChartObservation {
-            repo_url: service.helm_chart.repo_url.clone(),
-            chart: Some(service.helm_chart.chart.clone()),
-            version: service.helm_chart.version.clone(),
-            release_name: Some(service.helm_chart.release_name.clone()),
-            values: service.helm_chart.values.clone(),
-        },
-        deploy_in_cluster: service.deploy_in_cluster,
-        dpu_cluster_selector_present: false,
-        interfaces: service.interfaces.clone(),
-        paused: None,
-        security: Some(carbide_dpf::DpuServiceSecurityObservation {
-            privileged: Some(service.security.privileged),
-            spiffe: service.security.spiffe,
-        }),
-        service_daemon_set: service.service_daemon_set.as_ref().map(|daemon_set| {
-            DpuServiceDaemonSetObservation {
-                node_selector: daemon_set.node_selector_labels.as_ref().map(|labels| {
-                    serde_json::json!({
-                        "nodeSelectorTerms": [{
-                            "matchExpressions": labels.iter().map(|(key, value)| serde_json::json!({
-                                "key": key,
-                                "operator": "In",
-                                "values": [value],
-                            })).collect::<Vec<_>>(),
-                        }],
-                    })
-                }),
-                annotations: daemon_set.annotations.clone(),
-                labels: daemon_set.labels.clone(),
-                resources: daemon_set.resources.clone(),
-                update_strategy: daemon_set.update_strategy.as_ref().map(|strategy| {
-                    let mut value = serde_json::Map::new();
-                    if let Some(strategy_type) = &strategy.strategy_type {
-                        value.insert("type".to_string(), serde_json::json!(strategy_type));
-                    }
-                    if let Some(rolling_update) = &strategy.rolling_update {
-                        let mut rolling = serde_json::Map::new();
-                        if let Some(max_surge) = &rolling_update.max_surge {
-                            rolling.insert("maxSurge".to_string(), serde_json::json!(max_surge));
-                        }
-                        if let Some(max_unavailable) = &rolling_update.max_unavailable {
-                            rolling.insert(
-                                "maxUnavailable".to_string(),
-                                serde_json::json!(max_unavailable),
-                            );
-                        }
-                        value.insert(
-                            "rollingUpdate".to_string(),
-                            serde_json::Value::Object(rolling),
-                        );
-                    }
-                    serde_json::Value::Object(value)
-                }),
-            }
-        }),
-        service_id: service.service_id.clone(),
-        config_ports_present: false,
-        uid: Some(format!("uid-{}", service.name)),
-        resource_version: Some("1".to_string()),
-        is_deleting: false,
-    }
 }
 
 /// Converts a desired dynamic interface into a Kubernetes-like observation using the generated CR

@@ -71,6 +71,7 @@ pub fn project_dpu_service(
 ) -> DetachedDpuServiceDefinition {
     let identity = DpfHelmChartIdentity::from_service_id(extension_service_id);
     DetachedDpuServiceDefinition {
+        owner_references: Vec::new(),
         name: identity.dpu_service_name.clone(),
         namespace: namespace.to_owned(),
         labels: BTreeMap::from([(
@@ -874,6 +875,7 @@ mod tests {
             name: Some(projected.name.clone()),
             namespace: Some(projected.namespace.clone()),
             labels: projected.labels.clone(),
+            owner_references: projected.owner_references.clone(),
             is_deleting: false,
             helm_chart: carbide_dpf::DpuServiceHelmChartObservation {
                 repo_url: projected.helm_chart.repo_url.clone(),
